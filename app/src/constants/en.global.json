@@ -14,6 +14,8 @@
     "discoverSection": "Reveal Opponent",
     "discover": "Discover Opponent Number",
     "refreshState": "Refresh Game State",
+    "newGameSection": "Start A New Duel",
+    "startNewGame": "Start New Game",
     "phase": "Game Phase",
     "currentTurn": "Current Turn",
     "winner": "Winner",
@@ -25,11 +27,13 @@
     "errors": {
       "submitFailed": "Failed to submit number",
       "discoverFailed": "Failed to discover opponent number",
-      "stateFailed": "Failed to load game state"
+      "stateFailed": "Failed to load game state",
+      "resetFailed": "Failed to start a new game"
     },
     "success": {
       "submit": "Number submitted successfully",
-      "discover": "Opponent number discovered"
+      "discover": "Opponent number discovered",
+      "reset": "New game created"
     }
   },
   "auth": {

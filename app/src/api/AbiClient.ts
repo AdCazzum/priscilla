@@ -17,8 +17,6 @@ export type GamePhasePayload =
   | { name: 'InProgress' }
   | { name: 'Finished' }
 
-export type GamePhase = GamePhasePayload;
-
 export const GamePhase = {
   Setup: (): GamePhasePayload => ({ name: 'Setup' }),
   InProgress: (): GamePhasePayload => ({ name: 'InProgress' }),
@@ -44,12 +42,14 @@ export interface PlayerView {
 
 
 
+
 export type AbiEvent =
   | { name: "PlayerRegistered" }
   | { name: "NumberSubmitted" }
   | { name: "NumberDiscovered" }
   | { name: "TurnChanged" }
   | { name: "GameFinished" }
+  | { name: "GameReset" }
 ;
 
 
@@ -199,6 +199,18 @@ export class AbiClient {
    */
   public async gameState(): Promise<GameView> {
     const response = await this.app.execute(this.context, 'game_state', {});
+    if (response.success) {
+      return response.result as GameView;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * start_new_game
+   */
+  public async startNewGame(): Promise<GameView> {
+    const response = await this.app.execute(this.context, 'start_new_game', {});
     if (response.success) {
       return response.result as GameView;
     } else {

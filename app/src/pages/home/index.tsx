@@ -39,12 +39,71 @@ export default function HomePage() {
   const [isLoadingState, setIsLoadingState] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [isDiscovering, setIsDiscovering] = useState<boolean>(false);
+  const [isResetting, setIsResetting] = useState<boolean>(false);
   const [api, setApi] = useState<AbiClient | null>(null);
   const [currentContext, setCurrentContext] = useState<{
     applicationId: string;
     contextId: string;
     nodeUrl: string;
   } | null>(null);
+
+  const decodeCalimeroError = useCallback(
+    (err: unknown, fallback: string): string => {
+      if (!(err instanceof Error)) {
+        return fallback;
+      }
+
+      const asciiMatch = err.message.match(/\[(\s*\d+(?:\s*,\s*\d+)*)\]/);
+      if (asciiMatch) {
+        const byteValues = asciiMatch[1]
+          .split(',')
+          .map((value) => parseInt(value.trim(), 10))
+          .filter((value) => Number.isFinite(value));
+
+        if (byteValues.length > 0) {
+          try {
+            const jsonPayload = String.fromCharCode(...byteValues);
+            const parsed = JSON.parse(jsonPayload) as {
+              kind?: string;
+              data?: unknown;
+            };
+
+        if (parsed && typeof parsed.kind === 'string') {
+          switch (parsed.kind) {
+            case 'GameFull':
+              return 'Both player slots are already filled.';
+            case 'NumberAlreadySubmitted':
+              return 'This player already submitted a number.';
+                case 'PlayerUnknown':
+                  return `Unknown player id: ${parsed.data ?? 'N/A'}.`;
+                case 'NotEnoughPlayers':
+                  return 'Both players must submit numbers before discovering.';
+                case 'InvalidPhase':
+                  return `Action not allowed during phase: ${parsed.data ?? 'unknown'}.`;
+            case 'GameFinished':
+              return 'The game already finished.';
+            case 'NotYourTurn':
+              return `Wait for your turn. Current player: ${parsed.data ?? 'unknown'}.`;
+            case 'AlreadyDiscovered':
+              return 'This player already discovered the opponent number.';
+            case 'GameInProgress':
+              return 'Finish the current round before starting a new game.';
+            default:
+              break;
+          }
+        }
+
+            return jsonPayload;
+          } catch (parseError) {
+            console.warn('Failed to parse Calimero error payload', parseError);
+          }
+        }
+      }
+
+      return err.message || fallback;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -98,16 +157,13 @@ export default function HomePage() {
     } catch (error) {
       console.error('refreshGameState error:', error);
       show({
-        title:
-          error instanceof Error
-            ? error.message
-            : translations.home.errors.stateFailed,
+        title: decodeCalimeroError(error, translations.home.errors.stateFailed),
         variant: 'error',
       });
     } finally {
       setIsLoadingState(false);
     }
-  }, [api, show]);
+  }, [api, show, decodeCalimeroError]);
 
   const submitNumber = useCallback(async () => {
     if (!api) return;
@@ -145,16 +201,13 @@ export default function HomePage() {
     } catch (error) {
       console.error('submitNumber error:', error);
       show({
-        title:
-          error instanceof Error
-            ? error.message
-            : translations.home.errors.submitFailed,
+        title: decodeCalimeroError(error, translations.home.errors.submitFailed),
         variant: 'error',
       });
     } finally {
       setIsSubmitting(false);
     }
-  }, [api, playerId, secretNumber, show]);
+  }, [api, playerId, secretNumber, show, decodeCalimeroError]);
 
   const discoverOpponent = useCallback(async () => {
     if (!api) return;
@@ -179,16 +232,13 @@ export default function HomePage() {
     } catch (error) {
       console.error('discoverOpponent error:', error);
       show({
-        title:
-          error instanceof Error
-            ? error.message
-            : translations.home.errors.discoverFailed,
+        title: decodeCalimeroError(error, translations.home.errors.discoverFailed),
         variant: 'error',
       });
     } finally {
       setIsDiscovering(false);
     }
-  }, [api, playerId, show]);
+  }, [api, playerId, show, decodeCalimeroError]);
 
   useEffect(() => {
     if (isAuthenticated && api) {
