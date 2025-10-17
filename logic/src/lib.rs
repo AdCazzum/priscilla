@@ -96,6 +96,7 @@ pub enum Event<'a> {
     },
     TurnChanged { player_id: Option<&'a str> },
     GameFinished { winner: Option<&'a str> },
+    GameReset,
 }
 
 #[derive(Debug, Error, Serialize)]
@@ -118,6 +119,8 @@ pub enum Error {
     NotYourTurn(String),
     #[error("number already discovered for player: {0}")]
     AlreadyDiscovered(String),
+    #[error("game currently in progress; finish the round before resetting")]
+    GameInProgress,
 }
 
 #[app::logic]
@@ -271,6 +274,23 @@ impl ScripsicllaGame {
 
     pub fn game_state(&self) -> app::Result<GameView> {
         app::log!("Fetching game state");
+        Ok(self.view())
+    }
+
+    pub fn start_new_game(&mut self) -> app::Result<GameView> {
+        app::log!("Starting a new game, resetting state");
+
+        if self.phase == GamePhase::InProgress {
+            app::bail!(Error::GameInProgress);
+        }
+
+        self.players.clear();
+        self.phase = GamePhase::Setup;
+        self.current_turn_index = None;
+        self.winner = None;
+
+        app::emit!(Event::GameReset);
+
         Ok(self.view())
     }
 

@@ -32,10 +32,11 @@ pnpm run logic:clean
 - `submit_number(player_id: String, number: i64)` — registers a player (max two) and locks their number during the setup phase.
 - `discover_number(player_id: String)` — enforces turn order and reveals the opponent’s number to the caller.
 - `game_state()` — view helper returning the aggregate `GameView` (phase, current turn, players, winner).
+- `start_new_game()` — resets the stored state (available when the game is idle or finished) so a fresh duel can start.
 
 All access is identified by the supplied `player_id`. After both submissions, the contract automatically advances to the discover phase with the first submitter acting first. When both players have taken their turn, the winner is the higher number (ties result in no winner).
 
-Events emitted: `PlayerRegistered`, `NumberSubmitted`, `NumberDiscovered`, `TurnChanged`, `GameFinished`
+Events emitted: `PlayerRegistered`, `NumberSubmitted`, `NumberDiscovered`, `TurnChanged`, `GameFinished`, `GameReset`
 
 ### Build artifacts
 

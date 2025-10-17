@@ -145,6 +145,13 @@
       "returns": {
         "$ref": "GameView"
       }
+    },
+    {
+      "name": "start_new_game",
+      "params": [],
+      "returns": {
+        "$ref": "GameView"
+      }
     }
   ],
   "events": [
@@ -162,6 +169,9 @@
     },
     {
       "name": "GameFinished"
+    },
+    {
+      "name": "GameReset"
     }
   ]
 }

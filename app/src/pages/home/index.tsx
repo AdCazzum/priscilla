@@ -68,30 +68,30 @@ export default function HomePage() {
               data?: unknown;
             };
 
-        if (parsed && typeof parsed.kind === 'string') {
-          switch (parsed.kind) {
-            case 'GameFull':
-              return 'Both player slots are already filled.';
-            case 'NumberAlreadySubmitted':
-              return 'This player already submitted a number.';
+            if (parsed && typeof parsed.kind === 'string') {
+              switch (parsed.kind) {
+                case 'GameFull':
+                  return 'Both player slots are already filled.';
+                case 'NumberAlreadySubmitted':
+                  return 'This player already submitted a number.';
                 case 'PlayerUnknown':
                   return `Unknown player id: ${parsed.data ?? 'N/A'}.`;
                 case 'NotEnoughPlayers':
                   return 'Both players must submit numbers before discovering.';
                 case 'InvalidPhase':
                   return `Action not allowed during phase: ${parsed.data ?? 'unknown'}.`;
-            case 'GameFinished':
-              return 'The game already finished.';
-            case 'NotYourTurn':
-              return `Wait for your turn. Current player: ${parsed.data ?? 'unknown'}.`;
-            case 'AlreadyDiscovered':
-              return 'This player already discovered the opponent number.';
-            case 'GameInProgress':
-              return 'Finish the current round before starting a new game.';
-            default:
-              break;
-          }
-        }
+                case 'GameFinished':
+                  return 'The game already finished.';
+                case 'NotYourTurn':
+                  return `Wait for your turn. Current player: ${parsed.data ?? 'unknown'}.`;
+                case 'AlreadyDiscovered':
+                  return 'This player already discovered the opponent number.';
+                case 'GameInProgress':
+                  return 'Finish the current round before starting a new game.';
+                default:
+                  break;
+              }
+            }
 
             return jsonPayload;
           } catch (parseError) {
@@ -240,6 +240,30 @@ export default function HomePage() {
     }
   }, [api, playerId, show, decodeCalimeroError]);
 
+  const startNewGame = useCallback(async () => {
+    if (!api) return;
+
+    setIsResetting(true);
+    try {
+      const state = await api.startNewGame();
+      setGameState(state);
+      setPlayerId('');
+      setSecretNumber('');
+      show({
+        title: translations.home.success.reset,
+        variant: 'success',
+      });
+    } catch (error) {
+      console.error('startNewGame error:', error);
+      show({
+        title: decodeCalimeroError(error, translations.home.errors.resetFailed),
+        variant: 'error',
+      });
+    } finally {
+      setIsResetting(false);
+    }
+  }, [api, decodeCalimeroError, show]);
+
   useEffect(() => {
     if (isAuthenticated && api) {
       refreshGameState();
@@ -330,6 +354,9 @@ export default function HomePage() {
     },
     [],
   );
+
+  const formattedPhase = formatPhase(gameState?.phase);
+  const isGameInProgress = formattedPhase === 'InProgress';
 
   return (
     <>
@@ -491,7 +518,7 @@ export default function HomePage() {
                             {translations.home.phase}
                           </Text>
                           <Text size="lg" style={{ fontWeight: 600 }}>
-                            {formatPhase(gameState?.phase)}
+                            {formattedPhase}
                           </Text>
                         </CardContent>
                       </Card>
@@ -601,6 +628,31 @@ export default function HomePage() {
                       {isDiscovering
                         ? 'Revealing...'
                         : translations.home.discover}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card variant="rounded">
+                  <CardHeader>
+                    <CardTitle>{translations.home.newGameSection}</CardTitle>
+                  </CardHeader>
+                  <CardContent
+                    style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+                  >
+                    <Text size="sm" color="muted">
+                      {isGameInProgress
+                        ? 'Complete the current round before starting another duel.'
+                        : 'Reset the board so players can submit fresh secret numbers.'}
+                    </Text>
+                    <Button
+                      variant="secondary"
+                      onClick={startNewGame}
+                      disabled={isResetting || !api || isGameInProgress}
+                      style={{ minHeight: '3rem', maxWidth: '260px' }}
+                    >
+                      {isResetting
+                        ? 'Resetting...'
+                        : translations.home.startNewGame}
                     </Button>
                   </CardContent>
                 </Card>

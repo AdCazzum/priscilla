@@ -142,6 +142,28 @@ steps:
     outputs:
       final_state: result # Export 'result' as 'final_state'
 
+  # Step 15: Reset the contract to start a fresh duel
+  - name: Start New Game
+    type: call
+    node: calimero-node-1
+    context_id: "{{context_id}}"
+    executor_public_key: "{{member_public_key}}"
+    method: start_new_game
+    args: {}
+    outputs:
+      reset_state: result # Export 'result' as 'reset_state'
+
+  # Step 16: Fetch the initial state after reset
+  - name: Fetch Reset Game State
+    type: call
+    node: calimero-node-1
+    context_id: "{{context_id}}"
+    executor_public_key: "{{member_public_key}}"
+    method: game_state
+    args: {}
+    outputs:
+      post_reset_state: result # Export 'result' as 'post_reset_state'
+
 # Configuration options
 stop_all_nodes: false # Stop all nodes at the end of workflow
 restart: true # Don't restart nodes at the beginning of workflow
