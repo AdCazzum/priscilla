@@ -1,0 +1,130 @@
+{
+  "schema_version": "wasm-abi/1",
+  "types": {},
+  "methods": [
+    {
+      "name": "init",
+      "params": [],
+      "returns": {
+        "kind": "unit"
+      }
+    },
+    {
+      "name": "set",
+      "params": [
+        {
+          "name": "key",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "value",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "kind": "unit"
+      }
+    },
+    {
+      "name": "entries",
+      "params": [],
+      "returns": {
+        "kind": "map",
+        "key": {
+          "kind": "string"
+        },
+        "value": {
+          "kind": "string"
+        }
+      }
+    },
+    {
+      "name": "len",
+      "params": [],
+      "returns": {
+        "kind": "u32"
+      }
+    },
+    {
+      "name": "get",
+      "params": [
+        {
+          "name": "key",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "kind": "string"
+      }
+    },
+    {
+      "name": "get_unchecked",
+      "params": [
+        {
+          "name": "key",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "kind": "string"
+      }
+    },
+    {
+      "name": "get_result",
+      "params": [
+        {
+          "name": "key",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "kind": "string"
+      }
+    },
+    {
+      "name": "remove",
+      "params": [
+        {
+          "name": "key",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "kind": "string"
+      }
+    },
+    {
+      "name": "clear",
+      "params": [],
+      "returns": {
+        "kind": "unit"
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "Inserted"
+    },
+    {
+      "name": "Updated"
+    },
+    {
+      "name": "Removed"
+    },
+    {
+      "name": "Cleared"
+    }
+  ]
+}
