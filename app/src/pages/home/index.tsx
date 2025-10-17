@@ -1,27 +1,24 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   Button,
   Input,
-  Table,
   Navbar as MeroNavbar,
   NavbarBrand,
   NavbarMenu,
   NavbarItem,
   Grid,
   GridItem,
-  Menu,
-  MenuItem,
-  MenuGroup,
   Card,
   CardHeader,
   CardTitle,
   CardContent,
-  List,
+  Menu,
+  MenuItem,
+  MenuGroup,
   useToast,
   CopyToClipboard,
   Text,
 } from '@calimero-network/mero-ui';
-import { Trash } from '@calimero-network/mero-icons';
 import translations from '../../constants/en.global.json';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -29,22 +26,25 @@ import {
   CalimeroConnectButton,
   ConnectionType,
 } from '@calimero-network/calimero-client';
-import { createKvClient, AbiClient } from '../../features/kv/api';
+import { createGameClient, AbiClient } from '../../features/kv/api';
+import type { GameView, PlayerView } from '../../api/AbiClient';
 
 export default function HomePage() {
   const navigate = useNavigate();
   const { isAuthenticated, logout, app, appUrl } = useCalimero();
   const { show } = useToast();
-  const [key, setKey] = useState<string>('');
-  const [value, setValue] = useState<string>('');
-  const [entries, setEntries] = useState<any[]>([]);
+  const [playerId, setPlayerId] = useState<string>('');
+  const [secretNumber, setSecretNumber] = useState<string>('');
+  const [gameState, setGameState] = useState<GameView | null>(null);
+  const [isLoadingState, setIsLoadingState] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isDiscovering, setIsDiscovering] = useState<boolean>(false);
   const [api, setApi] = useState<AbiClient | null>(null);
   const [currentContext, setCurrentContext] = useState<{
     applicationId: string;
     contextId: string;
     nodeUrl: string;
   } | null>(null);
-  const loadingEntriesRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -58,7 +58,7 @@ export default function HomePage() {
 
     const initializeApi = async () => {
       try {
-        const client = await createKvClient(app);
+        const client = await createGameClient(app);
         setApi(client);
 
         // Get context information
@@ -80,113 +80,211 @@ export default function HomePage() {
     initializeApi();
   }, [app]);
 
-  const getEntries = useCallback(async () => {
-    if (loadingEntriesRef.current || !api) return;
-    loadingEntriesRef.current = true;
+  const formatPhase = useCallback((phase: GameView['phase'] | undefined) => {
+    if (!phase) return '—';
+    if (typeof phase === 'string') return phase;
+    if (typeof phase === 'object' && 'name' in phase && phase.name) {
+      return phase.name;
+    }
+    return String(phase);
+  }, []);
+
+  const refreshGameState = useCallback(async () => {
+    if (!api) return;
+    setIsLoadingState(true);
     try {
-      const data = await api.entries();
-      const entriesArray = Object.entries(data).map(([k, v]) => ({
-        key: k,
-        value: v,
-      }));
-      setEntries(entriesArray);
+      const state = await api.gameState();
+      setGameState(state);
     } catch (error) {
-      console.error('getEntries error:', error);
-      window.alert(
-        error instanceof Error
-          ? error.message
-          : translations.home.errors.loadFailed,
-      );
+      console.error('refreshGameState error:', error);
+      show({
+        title:
+          error instanceof Error
+            ? error.message
+            : translations.home.errors.stateFailed,
+        variant: 'error',
+      });
     } finally {
-      loadingEntriesRef.current = false;
+      setIsLoadingState(false);
     }
-  }, [api]);
+  }, [api, show]);
 
-  const setEntry = useCallback(async () => {
+  const submitNumber = useCallback(async () => {
     if (!api) return;
-    try {
-      await api.set({ key, value });
-      await getEntries();
+    const trimmedId = playerId.trim();
+    const parsedNumber = Number(secretNumber);
+
+    if (!trimmedId) {
       show({
-        title: `Successfully added entry: ${key}`,
+        title: 'Player ID is required',
+        variant: 'error',
+      });
+      return;
+    }
+
+    if (!Number.isFinite(parsedNumber)) {
+      show({
+        title: 'Enter a valid number',
+        variant: 'error',
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const updatedState = await api.submitNumber({
+        player_id: trimmedId,
+        number: parsedNumber,
+      });
+      setGameState(updatedState);
+      show({
+        title: translations.home.success.submit,
         variant: 'success',
       });
-      setKey('');
-      setValue('');
+      setSecretNumber('');
     } catch (error) {
-      console.error('setEntry error:', error);
+      console.error('submitNumber error:', error);
       show({
         title:
           error instanceof Error
             ? error.message
-            : translations.home.errors.setFailed,
+            : translations.home.errors.submitFailed,
         variant: 'error',
       });
+    } finally {
+      setIsSubmitting(false);
     }
-  }, [api, key, value, getEntries, show]);
+  }, [api, playerId, secretNumber, show]);
 
-  const resetEntries = useCallback(async () => {
+  const discoverOpponent = useCallback(async () => {
     if (!api) return;
-    try {
-      await api.clear();
-      await getEntries();
+    const trimmedId = playerId.trim();
+
+    if (!trimmedId) {
       show({
-        title: 'All entries cleared successfully',
+        title: 'Player ID is required',
+        variant: 'error',
+      });
+      return;
+    }
+
+    setIsDiscovering(true);
+    try {
+      const outcome = await api.discoverNumber({ player_id: trimmedId });
+      setGameState(outcome.game);
+      show({
+        title: `${translations.home.success.discover}: ${outcome.opponent_number}`,
         variant: 'success',
       });
     } catch (error) {
-      console.error('resetEntries error:', error);
+      console.error('discoverOpponent error:', error);
       show({
         title:
           error instanceof Error
             ? error.message
-            : translations.home.errors.clearFailed,
+            : translations.home.errors.discoverFailed,
         variant: 'error',
       });
+    } finally {
+      setIsDiscovering(false);
     }
-  }, [api, getEntries, show]);
-
-  const handleRemoveEntry = useCallback(
-    async (entryKey: string) => {
-      if (!api) return;
-      try {
-        await api.remove({ key: entryKey });
-        await getEntries();
-        show({
-          title: `Successfully removed entry: ${entryKey}`,
-          variant: 'success',
-        });
-      } catch (error) {
-        console.error('removeEntry error:', error);
-        show({
-          title:
-            error instanceof Error
-              ? error.message
-              : translations.home.errors.removeFailed,
-          variant: 'error',
-        });
-      }
-    },
-    [api, getEntries, show],
-  );
+  }, [api, playerId, show]);
 
   useEffect(() => {
     if (isAuthenticated && api) {
-      getEntries();
+      refreshGameState();
     }
-  }, [isAuthenticated, api, getEntries]);
-
-  // Websocket event subscription removed; rely on manual refresh after mutations
+  }, [isAuthenticated, api, refreshGameState]);
 
   const doLogout = useCallback(() => {
     logout();
     navigate('/');
   }, [logout, navigate]);
 
+  const renderPlayer = useCallback((player: PlayerView) => {
+      const numberDisplay =
+        player.number !== null ? player.number : translations.home.numberHidden;
+      return (
+        <div
+          key={player.id}
+          style={{
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: '8px',
+            padding: '1rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.5rem',
+            background: 'rgba(255, 255, 255, 0.02)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '0.75rem',
+            }}
+          >
+            <Text
+              size="md"
+              style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
+            >
+              {player.id}
+            </Text>
+            <div
+              style={{
+                display: 'flex',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+              }}
+            >
+              <span
+                style={{
+                  backgroundColor: player.number_submitted
+                    ? 'rgba(16, 185, 129, 0.2)'
+                    : 'rgba(234, 179, 8, 0.2)',
+                  color: player.number_submitted ? '#34d399' : '#facc15',
+                  padding: '0.25rem 0.5rem',
+                  borderRadius: '9999px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                {player.number_submitted ? 'Submitted' : 'Pending'}
+              </span>
+              <span
+                style={{
+                  backgroundColor: player.discovered
+                    ? 'rgba(59, 130, 246, 0.2)'
+                    : 'rgba(148, 163, 184, 0.2)',
+                  color: player.discovered ? '#93c5fd' : '#cbd5f5',
+                  padding: '0.25rem 0.5rem',
+                  borderRadius: '9999px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                {player.discovered ? 'Discovered' : 'Hidden'}
+              </span>
+            </div>
+          </div>
+          <Text size="sm" color="muted">
+            Secret: {numberDisplay}
+          </Text>
+        </div>
+      );
+    },
+    [],
+  );
+
   return (
     <>
       <MeroNavbar variant="elevated" size="md">
-        <NavbarBrand text="KV Store" />
+        <NavbarBrand text={translations.auth.title} />
         <NavbarMenu align="center">
           {currentContext && (
             <div
@@ -314,132 +412,169 @@ export default function HomePage() {
                 justifyContent: 'center',
               }}
             >
-              <div style={{ maxWidth: '800px', width: '100%' }}>
-                <Card variant="rounded" style={{ marginBottom: '2rem' }}>
+              <div style={{ maxWidth: '900px', width: '100%', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                <Card variant="rounded">
                   <CardHeader>
-                    <CardTitle>{translations.home.addEntry}</CardTitle>
+                    <CardTitle>{translations.home.welcome}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Text size="md" style={{ color: '#9ca3af', marginBottom: '1rem' }}>
+                      {translations.home.demoDescription}
+                    </Text>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                        gap: '1rem',
+                        width: '100%',
+                      }}
+                    >
+                      <Card
+                        variant="rounded"
+                        style={{
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'rgba(17, 24, 39, 0.6)',
+                        }}
+                      >
+                        <CardContent>
+                          <Text size="sm" color="muted">
+                            {translations.home.phase}
+                          </Text>
+                          <Text size="lg" style={{ fontWeight: 600 }}>
+                            {formatPhase(gameState?.phase)}
+                          </Text>
+                        </CardContent>
+                      </Card>
+                      <Card
+                        variant="rounded"
+                        style={{
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'rgba(17, 24, 39, 0.6)',
+                        }}
+                      >
+                        <CardContent>
+                          <Text size="sm" color="muted">
+                            {translations.home.currentTurn}
+                          </Text>
+                          <Text size="lg" style={{ fontWeight: 600 }}>
+                            {gameState?.current_turn ?? '—'}
+                          </Text>
+                        </CardContent>
+                      </Card>
+                      <Card
+                        variant="rounded"
+                        style={{
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          background: 'rgba(17, 24, 39, 0.6)',
+                        }}
+                      >
+                        <CardContent>
+                          <Text size="sm" color="muted">
+                            {translations.home.winner}
+                          </Text>
+                          <Text size="lg" style={{ fontWeight: 600 }}>
+                            {gameState?.winner ?? '—'}
+                          </Text>
+                        </CardContent>
+                      </Card>
+                    </div>
+                    <div style={{ marginTop: '1.5rem' }}>
+                      <Button
+                        variant="secondary"
+                        onClick={refreshGameState}
+                        disabled={isLoadingState || !api}
+                      >
+                        {translations.home.refreshState}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card variant="rounded">
+                  <CardHeader>
+                    <CardTitle>{translations.home.submitSection}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <form
                       onSubmit={(e) => {
                         e.preventDefault();
-                        setEntry();
+                        submitNumber();
                       }}
                       style={{
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '1.5rem',
-                        width: '100%',
+                        gap: '1.25rem',
                       }}
                     >
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns:
-                            'repeat(auto-fit, minmax(200px, 1fr))',
-                          gap: '1rem',
-                          width: '100%',
-                        }}
+                      <Input
+                        type="text"
+                        placeholder={translations.home.playerId}
+                        value={playerId}
+                        onChange={(e) => setPlayerId(e.target.value)}
+                      />
+                      <Input
+                        type="number"
+                        placeholder={translations.home.number}
+                        value={secretNumber}
+                        onChange={(e) => setSecretNumber(e.target.value)}
+                      />
+                      <Button
+                        type="submit"
+                        variant="success"
+                        disabled={isSubmitting || !api}
+                        style={{ minHeight: '3rem' }}
                       >
-                        <Input
-                          type="text"
-                          placeholder={translations.home.key}
-                          value={key}
-                          onChange={(e) => setKey(e.target.value)}
-                          style={{ width: '100%' }}
-                        />
-                        <Input
-                          type="text"
-                          placeholder={translations.home.value}
-                          value={value}
-                          onChange={(e) => setValue(e.target.value)}
-                          style={{ width: '100%' }}
-                        />
-                      </div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: '1rem',
-                          width: '100%',
-                          flexWrap: 'wrap',
-                        }}
-                      >
-                        <Button
-                          type="submit"
-                          variant="success"
-                          style={{
-                            flex: 1,
-                            minHeight: '3rem',
-                          }}
-                        >
-                          {translations.home.setEntry}
-                        </Button>
-                        <Button
-                          variant="error"
-                          onClick={resetEntries}
-                          style={{
-                            flex: 1,
-                            minHeight: '3rem',
-                          }}
-                        >
-                          {translations.home.resetEntries}
-                        </Button>
-                      </div>
+                        {isSubmitting
+                          ? 'Submitting...'
+                          : translations.home.submitNumber}
+                      </Button>
                     </form>
                   </CardContent>
                 </Card>
-                <Card variant="rounded" style={{ width: '100%' }}>
+
+                <Card variant="rounded">
                   <CardHeader>
-                    <CardTitle>Key-Value Entries</CardTitle>
+                    <CardTitle>{translations.home.discoverSection}</CardTitle>
                   </CardHeader>
-                  <CardContent>
-                    {entries.length === 0 ? (
-                      <div
+                  <CardContent
+                    style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+                  >
+                    <Text size="sm" color="muted">
+                      {translations.home.calimeroIntro}
+                    </Text>
+                    <Button
+                      variant="primary"
+                      onClick={discoverOpponent}
+                      disabled={isDiscovering || !api}
+                      style={{ minHeight: '3rem', maxWidth: '260px' }}
+                    >
+                      {isDiscovering
+                        ? 'Revealing...'
+                        : translations.home.discover}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card variant="rounded">
+                  <CardHeader>
+                    <CardTitle>{translations.home.players}</CardTitle>
+                  </CardHeader>
+                  <CardContent
+                    style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+                  >
+                    {gameState && gameState.players.length > 0 ? (
+                      gameState.players.map((player) => renderPlayer(player))
+                    ) : (
+                      <Text
+                        size="sm"
                         style={{
-                          color: '#aaa',
+                          color: '#9ca3af',
                           textAlign: 'center',
-                          padding: '3rem 2rem',
-                          fontSize: '1.1rem',
-                          fontStyle: 'italic',
+                          padding: '1rem 0',
                         }}
                       >
-                        {translations.home.noEntries}
-                      </div>
-                    ) : (
-                      <div style={{ overflowX: 'auto' }}>
-                        <Table
-                          columns={[
-                            { title: translations.home.key, key: 'key' },
-                            { title: translations.home.value, key: 'value' },
-                            {
-                              key: 'actions',
-                              title: 'Actions',
-                              render: (_value: any, row: any) => (
-                                <Button
-                                  variant="error"
-                                  onClick={() => handleRemoveEntry(row.key)}
-                                  style={{
-                                    padding: '8px 12px',
-                                    minWidth: 'auto',
-                                    borderRadius: '6px',
-                                  }}
-                                >
-                                  <Trash size={16} />
-                                </Button>
-                              ),
-                              width: 120,
-                              align: 'center',
-                            },
-                          ]}
-                          data={entries}
-                          zebra
-                          compact
-                          stickyHeader
-                          style={{
-                            minWidth: '100%',
-                          }}
-                        />
-                      </div>
+                        {translations.home.noPlayers}
+                      </Text>
                     )}
                   </CardContent>
                 </Card>

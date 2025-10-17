@@ -14,8 +14,8 @@ export function isOk<T>(
   return result.error === null;
 }
 
-export async function createKvClient(app: CalimeroApp): Promise<AbiClient> {
-  console.log('Creating KV client');
+export async function createGameClient(app: CalimeroApp): Promise<AbiClient> {
+  console.log('Creating Scripsiclla game client');
   let contexts = await app.fetchContexts();
   let context = contexts[0];
 
@@ -33,3 +33,5 @@ export async function createKvClient(app: CalimeroApp): Promise<AbiClient> {
 
   return new AbiClient(app, context);
 }
+
+export const createKvClient = createGameClient;

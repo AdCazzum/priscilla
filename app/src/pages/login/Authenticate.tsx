@@ -12,7 +12,6 @@ import {
   NavbarBrand,
   NavbarMenu,
   NavbarItem,
-  List,
 } from '@calimero-network/mero-ui';
 import {
   useCalimero,
@@ -34,7 +33,7 @@ export default function Authenticate() {
   return (
     <>
       <MeroNavbar variant="elevated" size="md">
-        <NavbarBrand text="KV Store" />
+        <NavbarBrand text={translations.auth.title} />
         <NavbarMenu align="right">
           <NavbarItem>
             <CalimeroConnectButton
@@ -102,11 +101,22 @@ export default function Authenticate() {
                         margin: 0,
                       }}
                     >
-                      {translations.auth.description.subtitle}
+                      {translations.auth.description.title}
                     </CardTitle>
                   </CardHeader>
                   <CardContent style={{ padding: '1.5rem' }}>
                     <div style={{ marginBottom: '1.5rem' }}>
+                      <p
+                        style={{
+                          color: '#d1d5db',
+                          marginBottom: '1rem',
+                          fontSize: '1rem',
+                          textAlign: 'center',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {translations.auth.description.subtitle}
+                      </p>
                       <div
                         style={{
                           background: 'rgba(59, 130, 246, 0.1)',
@@ -149,7 +159,7 @@ export default function Authenticate() {
                             letterSpacing: '0.05em',
                           }}
                         >
-                          ✨ Key Features
+                          ✨ Duel Highlights
                         </h3>
                         <div
                           style={{

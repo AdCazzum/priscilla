@@ -7,15 +7,49 @@ import {
 
 // Generated types
 
+export interface DiscoverOutcome {
+  opponent_number: number;
+  game: GameView;
+}
+
+export type GamePhasePayload =
+  | { name: 'Setup' }
+  | { name: 'InProgress' }
+  | { name: 'Finished' }
+
+export type GamePhase = GamePhasePayload;
+
+export const GamePhase = {
+  Setup: (): GamePhasePayload => ({ name: 'Setup' }),
+  InProgress: (): GamePhasePayload => ({ name: 'InProgress' }),
+  Finished: (): GamePhasePayload => ({ name: 'Finished' }),
+} as const;
+
+export interface GameView {
+  phase: GamePhase;
+  current_turn: string | null;
+  winner: string | null;
+  players: PlayerView[];
+}
+
+export interface PlayerView {
+  id: string;
+  number: number | null;
+  number_submitted: boolean;
+  discovered: boolean;
+}
+
+
 
 
 
 
 export type AbiEvent =
-  | { name: "Inserted" }
-  | { name: "Updated" }
-  | { name: "Removed" }
-  | { name: "Cleared" }
+  | { name: "PlayerRegistered" }
+  | { name: "NumberSubmitted" }
+  | { name: "NumberDiscovered" }
+  | { name: "TurnChanged" }
+  | { name: "GameFinished" }
 ;
 
 
@@ -137,96 +171,36 @@ export class AbiClient {
   }
 
   /**
-   * set
+   * submit_number
    */
-  public async set(params: { key: string; value: string }): Promise<void> {
-    const response = await this.app.execute(this.context, 'set', params);
+  public async submitNumber(params: { player_id: string; number: number }): Promise<GameView> {
+    const response = await this.app.execute(this.context, 'submit_number', params);
     if (response.success) {
-      return response.result as void;
+      return response.result as GameView;
     } else {
       throw new Error(response.error || 'Execution failed');
     }
   }
 
   /**
-   * entries
+   * discover_number
    */
-  public async entries(): Promise<Record<string, string>> {
-    const response = await this.app.execute(this.context, 'entries', {});
+  public async discoverNumber(params: { player_id: string }): Promise<DiscoverOutcome> {
+    const response = await this.app.execute(this.context, 'discover_number', params);
     if (response.success) {
-      return response.result as Record<string, string>;
+      return response.result as DiscoverOutcome;
     } else {
       throw new Error(response.error || 'Execution failed');
     }
   }
 
   /**
-   * len
+   * game_state
    */
-  public async len(): Promise<number> {
-    const response = await this.app.execute(this.context, 'len', {});
+  public async gameState(): Promise<GameView> {
+    const response = await this.app.execute(this.context, 'game_state', {});
     if (response.success) {
-      return response.result as number;
-    } else {
-      throw new Error(response.error || 'Execution failed');
-    }
-  }
-
-  /**
-   * get
-   */
-  public async get(params: { key: string }): Promise<string> {
-    const response = await this.app.execute(this.context, 'get', params);
-    if (response.success) {
-      return response.result as string;
-    } else {
-      throw new Error(response.error || 'Execution failed');
-    }
-  }
-
-  /**
-   * get_unchecked
-   */
-  public async getUnchecked(params: { key: string }): Promise<string> {
-    const response = await this.app.execute(this.context, 'get_unchecked', params);
-    if (response.success) {
-      return response.result as string;
-    } else {
-      throw new Error(response.error || 'Execution failed');
-    }
-  }
-
-  /**
-   * get_result
-   */
-  public async getResult(params: { key: string }): Promise<string> {
-    const response = await this.app.execute(this.context, 'get_result', params);
-    if (response.success) {
-      return response.result as string;
-    } else {
-      throw new Error(response.error || 'Execution failed');
-    }
-  }
-
-  /**
-   * remove
-   */
-  public async remove(params: { key: string }): Promise<string> {
-    const response = await this.app.execute(this.context, 'remove', params);
-    if (response.success) {
-      return response.result as string;
-    } else {
-      throw new Error(response.error || 'Execution failed');
-    }
-  }
-
-  /**
-   * clear
-   */
-  public async clear(): Promise<void> {
-    const response = await this.app.execute(this.context, 'clear', {});
-    if (response.success) {
-      return response.result as void;
+      return response.result as GameView;
     } else {
       throw new Error(response.error || 'Execution failed');
     }
