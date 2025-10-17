@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -12,6 +12,8 @@ import {
   NavbarBrand,
   NavbarMenu,
   NavbarItem,
+  Input,
+  Text,
 } from '@calimero-network/mero-ui';
 import {
   useCalimero,
@@ -20,9 +22,26 @@ import {
 } from '@calimero-network/calimero-client';
 import translations from '../../constants/en.global.json';
 
+const NODE_OPTIONS = [
+  { label: 'Node 1', url: 'http://node1.127.0.0.1.nip.io' },
+  { label: 'Node 2', url: 'http://node2.127.0.0.1.nip.io' },
+];
+
 export default function Authenticate() {
   const navigate = useNavigate();
   const { isAuthenticated } = useCalimero();
+  const [selectedNode, setSelectedNode] = useState<string>(NODE_OPTIONS[0].url);
+  const [customNode, setCustomNode] = useState<string>('');
+
+  const trimmedCustomNode = useMemo(() => customNode.trim(), [customNode]);
+
+  const connectionUrl = useMemo(() => {
+    return trimmedCustomNode.length > 0 ? trimmedCustomNode : selectedNode;
+  }, [trimmedCustomNode, selectedNode]);
+
+  const connectionDisplay = useMemo(() => {
+    return connectionUrl.replace(/^https?:\/\//, '');
+  }, [connectionUrl]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -36,10 +55,35 @@ export default function Authenticate() {
         <NavbarBrand text={translations.auth.title} />
         <NavbarMenu align="right">
           <NavbarItem>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+                marginRight: '1rem',
+                gap: '0.25rem',
+              }}
+            >
+              <Text
+                size="sm"
+                color="muted"
+                style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}
+              >
+                {translations.auth.nodeSelection.current}
+              </Text>
+              <Text
+                size="sm"
+                style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
+              >
+                {connectionDisplay}
+              </Text>
+            </div>
+          </NavbarItem>
+          <NavbarItem>
             <CalimeroConnectButton
               connectionType={{
                 type: ConnectionType.Custom,
-                url: 'http://node1.127.0.0.1.nip.io',
+                url: connectionUrl,
               }}
             />
           </NavbarItem>
@@ -211,6 +255,87 @@ export default function Authenticate() {
                         </div>
                       </div>
                     </div>
+
+                    <div
+                      style={{
+                        marginTop: '2rem',
+                        padding: '1.25rem',
+                        borderRadius: '10px',
+                        background: 'rgba(59, 130, 246, 0.08)',
+                        border: '1px solid rgba(59, 130, 246, 0.2)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '1rem',
+                      }}
+                    >
+                      <Text size="md" style={{ fontWeight: 600 }}>
+                        {translations.auth.nodeSelection.title}
+                      </Text>
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '0.5rem',
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        {NODE_OPTIONS.map((option) => {
+                          const isActive =
+                            trimmedCustomNode.length === 0 &&
+                            selectedNode === option.url;
+                          return (
+                            <Button
+                              key={option.url}
+                              variant={isActive ? 'primary' : 'secondary'}
+                              onClick={() => {
+                                setSelectedNode(option.url);
+                                setCustomNode('');
+                              }}
+                              style={{ minWidth: '120px' }}
+                            >
+                              {option.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.5rem',
+                        }}
+                      >
+                        <Text size="sm">{translations.auth.nodeSelection.custom}</Text>
+                        <Input
+                          value={customNode}
+                          onChange={(event) => setCustomNode(event.target.value)}
+                          placeholder={translations.auth.nodeSelection.placeholder}
+                        />
+                        <Text
+                          size="sm"
+                          style={{ color: '#9ca3af', fontSize: '0.8rem' }}
+                        >
+                          {translations.auth.nodeSelection.helper}
+                        </Text>
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.25rem',
+                        }}
+                      >
+                        <Text size="sm" color="muted">
+                          {translations.auth.nodeSelection.current}
+                        </Text>
+                        <Text
+                          size="sm"
+                          style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
+                        >
+                          {connectionUrl}
+                        </Text>
+                      </div>
+                    </div>
+
                     <div
                       style={{
                         display: 'flex',

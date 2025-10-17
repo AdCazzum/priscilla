@@ -49,6 +49,14 @@
         "Automatic win validation and synchronized state across nodes"
       ],
       "getStarted": "Connect to your Calimero node to begin"
+    },
+    "nodeSelection": {
+      "title": "Choose a Calimero node",
+      "preset": "Quick selects",
+      "custom": "Custom node URL",
+      "placeholder": "http://node1.127.0.0.1.nip.io",
+      "helper": "Leave blank to use the selected preset above.",
+      "current": "Connection target"
     }
   },
   "context": {
