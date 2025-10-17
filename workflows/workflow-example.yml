@@ -66,72 +66,81 @@ steps:
     invitee_id: "{{public_key}}"
     invitation: "{{invitation}}"
 
-  # Step 7: Execute a contract call to set a key-value pair
-  # Uses the member public key from the context as the executor
-  - name: Execute Contract Call - Set Key-Value
+  # Step 7: Player one submits their secret number
+  - name: Submit Number - Player One
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: set
+    method: submit_number
     args:
-      key: hello
-      value: world
+      player_id: player_one
+      number: 42
     outputs:
-      set_result: result # Export 'result' as 'set_result'
+      player_one_submit: result # Export 'result' as 'player_one_submit'
 
-  # Step 8: Wait for the set operation to complete and propagate
-  - name: Wait for Set Operation
+  # Step 8: Give time for the submission to propagate
+  - name: Wait After Player One Submit
     type: wait
-    seconds: 3
+    seconds: 2
 
-  # Step 9: Execute a view call to retrieve the stored value
-  # Demonstrates cross-node execution using the joined context
-  - name: Execute View Call - Get Value
+  # Step 9: Player two submits their secret number
+  - name: Submit Number - Player Two
     type: call
     node: calimero-node-2
     context_id: "{{context_id}}"
     executor_public_key: "{{public_key}}"
-    method: get
+    method: submit_number
     args:
-      key: hello
+      player_id: player_two
+      number: 36
     outputs:
-      get_result: result # Export 'result' as 'get_result'
+      player_two_submit: result # Export 'result' as 'player_two_submit'
 
-  # Step 10: Repeat a set of operations multiple times
-  # Demonstrates the new repeat step functionality
-  - name: Repeat Operations Multiple Times
-    type: repeat
-    count: 3
+  # Step 10: Wait for submissions to sync before starting the game round
+  - name: Wait Before Discover Phase
+    type: wait
+    seconds: 2
+
+  # Step 11: Player one discovers player two's number (starts the turn cycle)
+  - name: Discover Opponent - Player One
+    type: call
+    node: calimero-node-1
+    context_id: "{{context_id}}"
+    executor_public_key: "{{member_public_key}}"
+    method: discover_number
+    args:
+      player_id: player_one
     outputs:
-      current_iteration: iteration # Export 'iteration' as 'current_iteration'
-    steps:
-      - name: Set Key-Value Pair
-        type: call
-        node: calimero-node-1
-        context_id: "{{context_id}}"
-        executor_public_key: "{{member_public_key}}"
-        method: set
-        args:
-          key: "iteration_{{current_iteration}}"
-          value: "value_{{current_iteration}}"
-        outputs:
-          iteration_set_result: result # Export 'result' as 'iteration_set_result'
+      player_one_discover: result # Export 'result' as 'player_one_discover'
 
-      - name: Wait for Set Operation
-        type: wait
-        seconds: 2
+  # Step 12: Wait for turn handoff
+  - name: Wait After Player One Discover
+    type: wait
+    seconds: 2
 
-      - name: Get Key-Value Pair
-        type: call
-        node: calimero-node-2
-        context_id: "{{context_id}}"
-        executor_public_key: "{{public_key}}"
-        method: get
-        args:
-          key: "iteration_{{current_iteration}}"
-        outputs:
-          iteration_get_result: result # Export 'result' as 'iteration_get_result'
+  # Step 13: Player two discovers player one's number (completes the round)
+  - name: Discover Opponent - Player Two
+    type: call
+    node: calimero-node-2
+    context_id: "{{context_id}}"
+    executor_public_key: "{{public_key}}"
+    method: discover_number
+    args:
+      player_id: player_two
+    outputs:
+      player_two_discover: result # Export 'result' as 'player_two_discover'
+
+  # Step 14: Fetch the final game state from node one
+  - name: Fetch Final Game State
+    type: call
+    node: calimero-node-1
+    context_id: "{{context_id}}"
+    executor_public_key: "{{member_public_key}}"
+    method: game_state
+    args: {}
+    outputs:
+      final_state: result # Export 'result' as 'final_state'
 
 # Configuration options
 stop_all_nodes: false # Stop all nodes at the end of workflow

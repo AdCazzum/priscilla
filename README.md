@@ -1,6 +1,8 @@
-# KV Store - Demo application
+# Scripsiclla Number Duel
 
-This repository contains two independent parts:
+Two players secretly lock a number into the contract, then take turns revealing the opponent’s pick. The higher number wins once both have discovered the other side.
+
+This repository still contains two independent parts:
 
 - `logic/` — Rust smart-contract (compiled to WASM)
 - `app/` — React frontend (Vite) that talks to the contract via generated ABI client
@@ -27,15 +29,17 @@ pnpm run logic:clean
 
 ### Contract capabilities
 
-- Key-value operations: `set`, `get`, `remove`, `entries`, `len`, `clear`
-- Utility: `get_result`, `get_unchecked`
-- Demo helper: `create_random_entry()` — inserts `key-<n>` with `value-<n>` and returns the key
+- `submit_number(player_id: String, number: i64)` — registers a player (max two) and locks their number during the setup phase.
+- `discover_number(player_id: String)` — enforces turn order and reveals the opponent’s number to the caller.
+- `game_state()` — view helper returning the aggregate `GameView` (phase, current turn, players, winner).
 
-Events emitted: `Inserted`, `Updated`, `Removed`, `Cleared`
+All access is identified by the supplied `player_id`. After both submissions, the contract automatically advances to the discover phase with the first submitter acting first. When both players have taken their turn, the winner is the higher number (ties result in no winner).
+
+Events emitted: `PlayerRegistered`, `NumberSubmitted`, `NumberDiscovered`, `TurnChanged`, `GameFinished`
 
 ### Build artifacts
 
-- Built WASM outputs to `logic/res/<crate_name>.wasm` (minified if `wasm-opt` is available)
+- Built WASM outputs to `logic/res/kv_store.wasm` (minified if `wasm-opt` is available)
 - ABI JSON is expected at `logic/res/abi.json`
 
 ## App (React)
@@ -138,3 +142,30 @@ pnpm add -D concurrently chokidar-cli
 
 - If ABI codegen fails due to missing schema, ensure you’re on `@calimero-network/abi-codegen@0.1.1` (the script pins this version).
 
+## Contract Call Examples
+
+```json
+{
+  "method": "submit_number",
+  "argsJson": {
+    "player_id": "player_one",
+    "number": 42
+  }
+}
+```
+
+```json
+{
+  "method": "discover_number",
+  "argsJson": {
+    "player_id": "player_one"
+  }
+}
+```
+
+```json
+{
+  "method": "game_state",
+  "argsJson": {}
+}
+```
