@@ -66,103 +66,103 @@ steps:
     invitee_id: "{{public_key}}"
     invitation: "{{invitation}}"
 
-  # Step 7: Player one submits their secret number
-  - name: Submit Number - Player One
+  # Step 7: Node 1 posts a chat message
+  - name: Send Message from Node 1
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: submit_number
+    method: send_message
     args:
-      player_id: player_one
-      number: 42
+      sender: "node1"
+      role: "user"
+      content: "Hello from node 1 👋"
     outputs:
-      player_one_submit: result # Export 'result' as 'player_one_submit'
+      node1_message: result # Export 'result' as 'node1_message'
 
-  # Step 8: Give time for the submission to propagate
-  - name: Wait After Player One Submit
+  # Step 8: Give time for the message to propagate
+  - name: Wait After Node 1 Message
     type: wait
     seconds: 2
 
-  # Step 9: Player two submits their secret number
-  - name: Submit Number - Player Two
+  # Step 9: Node 2 posts a reply
+  - name: Send Message from Node 2
     type: call
     node: calimero-node-2
     context_id: "{{context_id}}"
     executor_public_key: "{{public_key}}"
-    method: submit_number
+    method: send_message
     args:
-      player_id: player_two
-      number: 36
+      sender: "node2"
+      role: "assistant"
+      content: "Hi node 1, Calimero chat is up and running!"
     outputs:
-      player_two_submit: result # Export 'result' as 'player_two_submit'
+      node2_message: result # Export 'result' as 'node2_message'
 
-  # Step 10: Wait for submissions to sync before starting the game round
-  - name: Wait Before Discover Phase
+  # Step 10: Wait for propagation before reading history
+  - name: Wait Before Fetching History
     type: wait
     seconds: 2
 
-  # Step 11: Player one discovers player two's number (starts the turn cycle)
-  - name: Discover Opponent - Player One
+  # Step 11: Fetch chat history from node 1
+  - name: Fetch Chat History
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: discover_number
+    method: messages
     args:
-      player_id: player_one
+      offset: 0
+      limit: 20
     outputs:
-      player_one_discover: result # Export 'result' as 'player_one_discover'
+      history_snapshot: result # Export 'result' as 'history_snapshot'
 
-  # Step 12: Wait for turn handoff
-  - name: Wait After Player One Discover
-    type: wait
-    seconds: 2
-
-  # Step 13: Player two discovers player one's number (completes the round)
-  - name: Discover Opponent - Player Two
+  # Step 12: Update max stored messages to a lower cap
+  - name: Update Max Messages
     type: call
     node: calimero-node-2
     context_id: "{{context_id}}"
     executor_public_key: "{{public_key}}"
-    method: discover_number
+    method: set_max_messages
     args:
-      player_id: player_two
+      max_messages: 100
     outputs:
-      player_two_discover: result # Export 'result' as 'player_two_discover'
+      max_messages_update: result # Export 'result' as 'max_messages_update'
 
-  # Step 14: Fetch the final game state from node one
-  - name: Fetch Final Game State
+  # Step 13: Inspect contract info
+  - name: Fetch Chat Info
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: game_state
+    method: info
     args: {}
     outputs:
-      final_state: result # Export 'result' as 'final_state'
+      chat_info: result # Export 'result' as 'chat_info'
 
-  # Step 15: Reset the contract to start a fresh duel
-  - name: Start New Game
+  # Step 14: Clear the history to reset the chat
+  - name: Clear Chat History
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: start_new_game
+    method: clear_history
     args: {}
     outputs:
-      reset_state: result # Export 'result' as 'reset_state'
+      cleared: result # Export 'result' as 'cleared'
 
-  # Step 16: Fetch the initial state after reset
-  - name: Fetch Reset Game State
+  # Step 15: Confirm history is empty
+  - name: Fetch History After Clear
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: game_state
-    args: {}
+    method: messages
+    args:
+      offset: 0
+      limit: 20
     outputs:
-      post_reset_state: result # Export 'result' as 'post_reset_state'
+      cleared_history: result # Export 'result' as 'cleared_history'
 
 # Configuration options
 stop_all_nodes: false # Stop all nodes at the end of workflow

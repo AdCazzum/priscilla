@@ -1,109 +1,82 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Grid,
+  GridItem,
   Input,
   Navbar as MeroNavbar,
   NavbarBrand,
   NavbarMenu,
   NavbarItem,
-  Grid,
-  GridItem,
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-  Menu,
-  MenuItem,
-  MenuGroup,
-  useToast,
-  CopyToClipboard,
   Text,
+  useToast,
 } from '@calimero-network/mero-ui';
-import translations from '../../constants/en.global.json';
-import { useNavigate } from 'react-router-dom';
 import {
-  useCalimero,
   CalimeroConnectButton,
   ConnectionType,
+  useCalimero,
 } from '@calimero-network/calimero-client';
-import { createGameClient, AbiClient } from '../../features/kv/api';
-import type { GameView, PlayerView } from '../../api/AbiClient';
+import { useNavigate } from 'react-router-dom';
+import * as webllm from '@mlc-ai/web-llm';
+import translations from '../../constants/en.global.json';
+import { AbiClient, createChatClient } from '../../features/kv/api';
+import type {
+  ChatMessage as StoredMessage,
+  ChatInfo,
+} from '../../api/AbiClient';
 
-export default function HomePage() {
+type ConversationRole = 'system' | 'user' | 'assistant';
+
+interface ConversationMessage {
+  id: string;
+  role: ConversationRole;
+  content: string;
+  sender: string;
+  timestamp: number;
+}
+
+const MODEL_NAME = 'Phi-3-mini-4k-instruct-q4f16_1-MLC';
+const MAX_HISTORY = 200;
+
+export default function HomePage(): JSX.Element {
   const navigate = useNavigate();
   const { isAuthenticated, logout, app, appUrl } = useCalimero();
   const { show } = useToast();
-  const [playerId, setPlayerId] = useState<string>('');
-  const [secretNumber, setSecretNumber] = useState<string>('');
-  const [gameState, setGameState] = useState<GameView | null>(null);
-  const [isLoadingState, setIsLoadingState] = useState<boolean>(false);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [isDiscovering, setIsDiscovering] = useState<boolean>(false);
-  const [isResetting, setIsResetting] = useState<boolean>(false);
-  const [api, setApi] = useState<AbiClient | null>(null);
-  const [currentContext, setCurrentContext] = useState<{
-    applicationId: string;
-    contextId: string;
-    nodeUrl: string;
-  } | null>(null);
 
-  const decodeCalimeroError = useCallback(
-    (err: unknown, fallback: string): string => {
-      if (!(err instanceof Error)) {
-        return fallback;
-      }
+  const [displayName, setDisplayName] = useState<string>('you');
+  const [input, setInput] = useState<string>('');
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [info, setInfo] = useState<ChatInfo | null>(null);
+  const [apiClient, setApiClient] = useState<AbiClient | null>(null);
+  const [engine, setEngine] =
+    useState<webllm.WebWorkerMLCEngine | null>(null);
+  const [engineStatus, setEngineStatus] = useState<string>('Loading model…');
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(false);
+  const [engineReady, setEngineReady] = useState<boolean>(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const workerRef = useRef<Worker | null>(null);
 
-      const asciiMatch = err.message.match(/\[(\s*\d+(?:\s*,\s*\d+)*)\]/);
-      if (asciiMatch) {
-        const byteValues = asciiMatch[1]
-          .split(',')
-          .map((value) => parseInt(value.trim(), 10))
-          .filter((value) => Number.isFinite(value));
+  const connectionTarget = useMemo(() => {
+    if (!appUrl) {
+      return 'http://node1.127.0.0.1.nip.io';
+    }
+    return appUrl;
+  }, [appUrl]);
 
-        if (byteValues.length > 0) {
-          try {
-            const jsonPayload = String.fromCharCode(...byteValues);
-            const parsed = JSON.parse(jsonPayload) as {
-              kind?: string;
-              data?: unknown;
-            };
-
-            if (parsed && typeof parsed.kind === 'string') {
-              switch (parsed.kind) {
-                case 'GameFull':
-                  return 'Both player slots are already filled.';
-                case 'NumberAlreadySubmitted':
-                  return 'This player already submitted a number.';
-                case 'PlayerUnknown':
-                  return `Unknown player id: ${parsed.data ?? 'N/A'}.`;
-                case 'NotEnoughPlayers':
-                  return 'Both players must submit numbers before discovering.';
-                case 'InvalidPhase':
-                  return `Action not allowed during phase: ${parsed.data ?? 'unknown'}.`;
-                case 'GameFinished':
-                  return 'The game already finished.';
-                case 'NotYourTurn':
-                  return `Wait for your turn. Current player: ${parsed.data ?? 'unknown'}.`;
-                case 'AlreadyDiscovered':
-                  return 'This player already discovered the opponent number.';
-                case 'GameInProgress':
-                  return 'Finish the current round before starting a new game.';
-                default:
-                  break;
-              }
-            }
-
-            return jsonPayload;
-          } catch (parseError) {
-            console.warn('Failed to parse Calimero error payload', parseError);
-          }
-        }
-      }
-
-      return err.message || fallback;
-    },
-    [],
-  );
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -111,580 +84,547 @@ export default function HomePage() {
     }
   }, [isAuthenticated, navigate]);
 
-  // Create API client when app is available
   useEffect(() => {
     if (!app) return;
 
-    const initializeApi = async () => {
+    let cancelled = false;
+    (async () => {
       try {
-        const client = await createGameClient(app);
-        setApi(client);
-
-        // Get context information
-        const contexts = await app.fetchContexts();
-        if (contexts.length > 0) {
-          const context = contexts[0];
-          setCurrentContext({
-            applicationId: context.applicationId,
-            contextId: context.contextId,
-            nodeUrl: appUrl || 'http://node1.127.0.0.1.nip.io', // Fallback to hardcoded URL
-          });
+        const client = await createChatClient(app);
+        if (!cancelled) {
+          setApiClient(client);
         }
       } catch (error) {
-        console.error('Failed to create API client:', error);
-        window.alert('Failed to initialize API client');
+        console.error('Failed to create chat client', error);
+        if (!cancelled) {
+          show({
+            title: 'Failed to initialise contract client',
+            variant: 'error',
+          });
+        }
       }
+    })();
+
+    return () => {
+      cancelled = true;
     };
-
-    initializeApi();
-  }, [app]);
-
-  const formatPhase = useCallback((phase: GameView['phase'] | undefined) => {
-    if (!phase) return '—';
-    if (typeof phase === 'string') return phase;
-    if (typeof phase === 'object' && 'name' in phase && phase.name) {
-      return phase.name;
-    }
-    return String(phase);
-  }, []);
-
-  const refreshGameState = useCallback(async () => {
-    if (!api) return;
-    setIsLoadingState(true);
-    try {
-      const state = await api.gameState();
-      setGameState(state);
-    } catch (error) {
-      console.error('refreshGameState error:', error);
-      show({
-        title: decodeCalimeroError(error, translations.home.errors.stateFailed),
-        variant: 'error',
-      });
-    } finally {
-      setIsLoadingState(false);
-    }
-  }, [api, show, decodeCalimeroError]);
-
-  const submitNumber = useCallback(async () => {
-    if (!api) return;
-    const trimmedId = playerId.trim();
-    const parsedNumber = Number(secretNumber);
-
-    if (!trimmedId) {
-      show({
-        title: 'Player ID is required',
-        variant: 'error',
-      });
-      return;
-    }
-
-    if (!Number.isFinite(parsedNumber)) {
-      show({
-        title: 'Enter a valid number',
-        variant: 'error',
-      });
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const updatedState = await api.submitNumber({
-        player_id: trimmedId,
-        number: parsedNumber,
-      });
-      setGameState(updatedState);
-      show({
-        title: translations.home.success.submit,
-        variant: 'success',
-      });
-      setSecretNumber('');
-    } catch (error) {
-      console.error('submitNumber error:', error);
-      show({
-        title: decodeCalimeroError(error, translations.home.errors.submitFailed),
-        variant: 'error',
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [api, playerId, secretNumber, show, decodeCalimeroError]);
-
-  const discoverOpponent = useCallback(async () => {
-    if (!api) return;
-    const trimmedId = playerId.trim();
-
-    if (!trimmedId) {
-      show({
-        title: 'Player ID is required',
-        variant: 'error',
-      });
-      return;
-    }
-
-    setIsDiscovering(true);
-    try {
-      const outcome = await api.discoverNumber({ player_id: trimmedId });
-      setGameState(outcome.game);
-      show({
-        title: `${translations.home.success.discover}: ${outcome.opponent_number}`,
-        variant: 'success',
-      });
-    } catch (error) {
-      console.error('discoverOpponent error:', error);
-      show({
-        title: decodeCalimeroError(error, translations.home.errors.discoverFailed),
-        variant: 'error',
-      });
-    } finally {
-      setIsDiscovering(false);
-    }
-  }, [api, playerId, show, decodeCalimeroError]);
-
-  const startNewGame = useCallback(async () => {
-    if (!api) return;
-
-    setIsResetting(true);
-    try {
-      const state = await api.startNewGame();
-      setGameState(state);
-      setPlayerId('');
-      setSecretNumber('');
-      show({
-        title: translations.home.success.reset,
-        variant: 'success',
-      });
-    } catch (error) {
-      console.error('startNewGame error:', error);
-      show({
-        title: decodeCalimeroError(error, translations.home.errors.resetFailed),
-        variant: 'error',
-      });
-    } finally {
-      setIsResetting(false);
-    }
-  }, [api, decodeCalimeroError, show]);
+  }, [app, show]);
 
   useEffect(() => {
-    if (isAuthenticated && api) {
-      refreshGameState();
-    }
-  }, [isAuthenticated, api, refreshGameState]);
-
-  const doLogout = useCallback(() => {
-    logout();
-    navigate('/');
-  }, [logout, navigate]);
-
-  const renderPlayer = useCallback((player: PlayerView) => {
-      const numberDisplay =
-        player.number !== null ? player.number : translations.home.numberHidden;
-      return (
-        <div
-          key={player.id}
-          style={{
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '8px',
-            padding: '1rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.5rem',
-            background: 'rgba(255, 255, 255, 0.02)',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: '0.75rem',
-            }}
-          >
-            <Text
-              size="md"
-              style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
-            >
-              {player.id}
-            </Text>
-            <div
-              style={{
-                display: 'flex',
-                gap: '0.5rem',
-                flexWrap: 'wrap',
-              }}
-            >
-              <span
-                style={{
-                  backgroundColor: player.number_submitted
-                    ? 'rgba(16, 185, 129, 0.2)'
-                    : 'rgba(234, 179, 8, 0.2)',
-                  color: player.number_submitted ? '#34d399' : '#facc15',
-                  padding: '0.25rem 0.5rem',
-                  borderRadius: '9999px',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                }}
-              >
-                {player.number_submitted ? 'Submitted' : 'Pending'}
-              </span>
-              <span
-                style={{
-                  backgroundColor: player.discovered
-                    ? 'rgba(59, 130, 246, 0.2)'
-                    : 'rgba(148, 163, 184, 0.2)',
-                  color: player.discovered ? '#93c5fd' : '#cbd5f5',
-                  padding: '0.25rem 0.5rem',
-                  borderRadius: '9999px',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                }}
-              >
-                {player.discovered ? 'Discovered' : 'Hidden'}
-              </span>
-            </div>
-          </div>
-          <Text size="sm" color="muted">
-            Secret: {numberDisplay}
-          </Text>
-        </div>
+    if (!workerRef.current) {
+      workerRef.current = new Worker(
+        new URL('../../workers/llm.worker.ts', import.meta.url),
+        { type: 'module' },
       );
+    }
+
+    const worker = workerRef.current;
+
+    webllm
+      .CreateWebWorkerMLCEngine(worker, MODEL_NAME, {
+        initProgressCallback: (progress) => {
+          setEngineStatus(progress.text);
+        },
+      })
+      .then((newEngine) => {
+        setEngine(newEngine);
+        setEngineReady(true);
+        setEngineStatus('Model ready');
+      })
+      .catch((error) => {
+        console.error('Failed to initialise web-llm engine', error);
+        setEngineStatus('Failed to load model');
+        show({
+          title: 'Failed to load language model',
+          variant: 'error',
+        });
+      });
+
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, [show]);
+
+  const normaliseStoredMessages = useCallback(
+    (stored: StoredMessage[]): ConversationMessage[] =>
+      stored.map((msg) => ({
+        id: `stored-${msg.id}`,
+        role: sanitiseRole(msg.role),
+        content: msg.content,
+        sender: msg.sender,
+        timestamp: msg.timestamp_ms,
+      })),
+    [],
+  );
+
+  const loadHistory = useCallback(async () => {
+    if (!apiClient) return;
+    setIsLoadingHistory(true);
+    try {
+      const [history, metadata] = await Promise.all([
+        apiClient.messages({ offset: 0, limit: MAX_HISTORY }),
+        apiClient.info(),
+      ]);
+      setMessages(normaliseStoredMessages(history));
+      setInfo(metadata);
+      setTimeout(scrollToBottom, 100);
+    } catch (error) {
+      console.error('Failed to load messages', error);
+      show({
+        title: 'Failed to load chat history',
+        variant: 'error',
+      });
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [apiClient, normaliseStoredMessages, scrollToBottom, show]);
+
+  useEffect(() => {
+    if (apiClient) {
+      loadHistory();
+    }
+  }, [apiClient, loadHistory]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
+
+  const buildLlmContext = useCallback(
+    (history: ConversationMessage[]): webllm.ChatCompletionMessageParam[] => {
+      return history.map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
     },
     [],
   );
 
-  const formattedPhase = formatPhase(gameState?.phase);
-  const isGameInProgress = formattedPhase === 'InProgress';
+  const persistMessage = useCallback(
+    async (
+      payload: Omit<ConversationMessage, 'id'>,
+    ): Promise<ConversationMessage | null> => {
+      if (!apiClient) return null;
+      try {
+        const stored = await apiClient.sendMessage({
+          sender: payload.sender,
+          role: payload.role,
+          content: payload.content,
+        });
+        return {
+          id: `stored-${stored.id}`,
+          role: sanitiseRole(stored.role),
+          content: stored.content,
+          sender: stored.sender,
+          timestamp: stored.timestamp_ms,
+        };
+      } catch (error) {
+        console.error('Failed to persist message', error);
+        show({
+          title: 'Failed to persist message to Calimero',
+          variant: 'error',
+        });
+        return null;
+      }
+    },
+    [apiClient, show],
+  );
+
+  const handleSendMessage = useCallback(async () => {
+    const trimmed = input.trim();
+    if (
+      !trimmed ||
+      !apiClient ||
+      !engine ||
+      isGenerating ||
+      !engineReady
+    ) {
+      return;
+    }
+
+    setIsGenerating(true);
+    setInput('');
+
+    const userMessage: Omit<ConversationMessage, 'id'> = {
+      role: 'user',
+      content: trimmed,
+      sender: displayName.trim() || 'you',
+      timestamp: Date.now(),
+    };
+
+    const persistedUser = await persistMessage(userMessage);
+    const updatedHistory = persistedUser
+      ? [...messages, persistedUser]
+      : [...messages, { ...userMessage, id: `local-${Date.now()}` }];
+
+    setMessages(updatedHistory);
+
+    try {
+      const llmMessages = buildLlmContext(updatedHistory);
+      const completion = await engine.chat.completions.create({
+        messages: llmMessages,
+        temperature: 0.7,
+      });
+
+      const assistantText = extractAssistantContent(completion);
+      if (!assistantText) {
+        throw new Error('No assistant response returned');
+      }
+
+      const assistantMessage: Omit<ConversationMessage, 'id'> = {
+        role: 'assistant',
+        content: assistantText,
+        sender: 'assistant',
+        timestamp: Date.now(),
+      };
+
+      const persistedAssistant = await persistMessage(assistantMessage);
+      const finalHistory = persistedAssistant
+        ? [...updatedHistory, persistedAssistant]
+        : [
+            ...updatedHistory,
+            { ...assistantMessage, id: `local-${Date.now()}` },
+          ];
+      setMessages(finalHistory);
+    } catch (error) {
+      console.error('Failed to generate assistant response', error);
+      show({
+        title: 'The assistant failed to respond',
+        variant: 'error',
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [
+    apiClient,
+    buildLlmContext,
+    displayName,
+    engine,
+    engineReady,
+    input,
+    isGenerating,
+    messages,
+    persistMessage,
+    show,
+  ]);
+
+  const handleClearChat = useCallback(async () => {
+    if (!apiClient) return;
+    try {
+      await apiClient.clearHistory();
+      setMessages([]);
+      show({
+        title: 'Chat history cleared',
+        variant: 'success',
+      });
+    } catch (error) {
+      console.error('Failed to clear history', error);
+      show({
+        title: 'Unable to clear history',
+        variant: 'error',
+      });
+    }
+  }, [apiClient, show]);
+
+  const connectionBadge = useMemo(() => {
+    if (!appUrl) return null;
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: '0.25rem',
+        }}
+      >
+        <Text size="sm" color="muted" style={{ fontSize: '0.75rem' }}>
+          Connected node
+        </Text>
+        <Text
+          size="sm"
+          style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
+        >
+          {appUrl.replace(/^https?:\/\//, '')}
+        </Text>
+      </div>
+    );
+  }, [appUrl]);
 
   return (
     <>
       <MeroNavbar variant="elevated" size="md">
         <NavbarBrand text={translations.auth.title} />
-        <NavbarMenu align="center">
-          {currentContext && (
-            <div
-              style={{
-                display: 'flex',
-                gap: '1.5rem',
-                alignItems: 'center',
-                fontSize: '0.875rem',
-                color: '#9ca3af',
-                flexWrap: 'wrap',
-                justifyContent: 'center',
-              }}
-            >
-              <div
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                <Text size="sm" color="muted">
-                  Node:
-                </Text>
-                <Text
-                  size="sm"
-                  style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
-                >
-                  {currentContext.nodeUrl
-                    .replace('http://', '')
-                    .replace('https://', '')}
-                </Text>
-                <CopyToClipboard
-                  text={currentContext.nodeUrl}
-                  variant="icon"
-                  size="small"
-                  successMessage="Node URL copied!"
-                />
-              </div>
-              <div
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                <Text size="sm" color="muted">
-                  App ID:
-                </Text>
-                <Text
-                  size="sm"
-                  style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
-                >
-                  {currentContext.applicationId.slice(0, 8)}...
-                  {currentContext.applicationId.slice(-8)}
-                </Text>
-                <CopyToClipboard
-                  text={currentContext.applicationId}
-                  variant="icon"
-                  size="small"
-                  successMessage="Application ID copied!"
-                />
-              </div>
-              <div
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                <Text size="sm" color="muted">
-                  Context ID:
-                </Text>
-                <Text
-                  size="sm"
-                  style={{ fontFamily: 'monospace', color: '#e5e7eb' }}
-                >
-                  {currentContext.contextId.slice(0, 8)}...
-                  {currentContext.contextId.slice(-8)}
-                </Text>
-                <CopyToClipboard
-                  text={currentContext.contextId}
-                  variant="icon"
-                  size="small"
-                  successMessage="Context ID copied!"
-                />
-              </div>
-            </div>
-          )}
-        </NavbarMenu>
+        <NavbarMenu align="center">{connectionBadge}</NavbarMenu>
         <NavbarMenu align="right">
-          {isAuthenticated ? (
-            <Menu variant="compact" size="md">
-              <MenuGroup>
-                <MenuItem onClick={doLogout}>
-                  {translations.home.logout}
-                </MenuItem>
-              </MenuGroup>
-            </Menu>
-          ) : (
-            <NavbarItem>
-              <CalimeroConnectButton
-                connectionType={{
-                  type: ConnectionType.Custom,
-                  url: 'http://node1.127.0.0.1.nip.io',
-                }}
-              />
-            </NavbarItem>
-          )}
+          <NavbarItem>
+            <CalimeroConnectButton
+              connectionType={{
+                type: ConnectionType.Custom,
+                url: connectionTarget,
+              }}
+            />
+          </NavbarItem>
+          <NavbarItem>
+            <Button variant="ghost" onClick={logout}>
+              {translations.home.logout}
+            </Button>
+          </NavbarItem>
         </NavbarMenu>
       </MeroNavbar>
       <div
         style={{
           minHeight: '100vh',
-          backgroundColor: '#111111',
-          color: 'white',
+          backgroundColor: '#0f172a',
+          padding: '2rem 1rem',
         }}
       >
-        <Grid
-          columns={1}
-          gap={32}
-          maxWidth="100%"
-          justify="center"
-          align="center"
-          style={{
-            minHeight: '100vh',
-            padding: '2rem',
-          }}
-        >
+        <Grid columns={1} maxWidth="100%" justify="center">
           <GridItem>
-            <main
+            <div
               style={{
-                width: '100%',
-                maxWidth: '1200px',
+                maxWidth: '960px',
+                margin: '0 auto',
                 display: 'flex',
                 flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
+                gap: '1.5rem',
               }}
             >
-              <div style={{ maxWidth: '900px', width: '100%', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                <Card variant="rounded">
-                  <CardHeader>
-                    <CardTitle>{translations.home.welcome}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <Text size="md" style={{ color: '#9ca3af', marginBottom: '1rem' }}>
-                      {translations.home.demoDescription}
-                    </Text>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                        gap: '1rem',
-                        width: '100%',
-                      }}
-                    >
-                      <Card
-                        variant="rounded"
-                        style={{
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          background: 'rgba(17, 24, 39, 0.6)',
-                        }}
-                      >
-                        <CardContent>
-                          <Text size="sm" color="muted">
-                            {translations.home.phase}
-                          </Text>
-                          <Text size="lg" style={{ fontWeight: 600 }}>
-                            {formattedPhase}
-                          </Text>
-                        </CardContent>
-                      </Card>
-                      <Card
-                        variant="rounded"
-                        style={{
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          background: 'rgba(17, 24, 39, 0.6)',
-                        }}
-                      >
-                        <CardContent>
-                          <Text size="sm" color="muted">
-                            {translations.home.currentTurn}
-                          </Text>
-                          <Text size="lg" style={{ fontWeight: 600 }}>
-                            {gameState?.current_turn ?? '—'}
-                          </Text>
-                        </CardContent>
-                      </Card>
-                      <Card
-                        variant="rounded"
-                        style={{
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          background: 'rgba(17, 24, 39, 0.6)',
-                        }}
-                      >
-                        <CardContent>
-                          <Text size="sm" color="muted">
-                            {translations.home.winner}
-                          </Text>
-                          <Text size="lg" style={{ fontWeight: 600 }}>
-                            {gameState?.winner ?? '—'}
-                          </Text>
-                        </CardContent>
-                      </Card>
-                    </div>
-                    <div style={{ marginTop: '1.5rem' }}>
-                      <Button
-                        variant="secondary"
-                        onClick={refreshGameState}
-                        disabled={isLoadingState || !api}
-                      >
-                        {translations.home.refreshState}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card variant="rounded">
-                  <CardHeader>
-                    <CardTitle>{translations.home.submitSection}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        submitNumber();
-                      }}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '1.25rem',
-                      }}
-                    >
-                      <Input
-                        type="text"
-                        placeholder={translations.home.playerId}
-                        value={playerId}
-                        onChange={(e) => setPlayerId(e.target.value)}
-                      />
-                      <Input
-                        type="number"
-                        placeholder={translations.home.number}
-                        value={secretNumber}
-                        onChange={(e) => setSecretNumber(e.target.value)}
-                      />
-                      <Button
-                        type="submit"
-                        variant="success"
-                        disabled={isSubmitting || !api}
-                        style={{ minHeight: '3rem' }}
-                      >
-                        {isSubmitting
-                          ? 'Submitting...'
-                          : translations.home.submitNumber}
-                      </Button>
-                    </form>
-                  </CardContent>
-                </Card>
-
-                <Card variant="rounded">
-                  <CardHeader>
-                    <CardTitle>{translations.home.discoverSection}</CardTitle>
-                  </CardHeader>
-                  <CardContent
-                    style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+              <Card variant="rounded">
+                <CardHeader>
+                  <CardTitle>Web LLM Chat</CardTitle>
+                </CardHeader>
+                <CardContent
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1rem',
+                  }}
+                >
+                  <Text size="sm" color="muted">
+                    {engineStatus}
+                  </Text>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '1rem',
+                      flexWrap: 'wrap',
+                    }}
                   >
-                    <Text size="sm" color="muted">
-                      {translations.home.calimeroIntro}
-                    </Text>
-                    <Button
-                      variant="primary"
-                      onClick={discoverOpponent}
-                      disabled={isDiscovering || !api}
-                      style={{ minHeight: '3rem', maxWidth: '260px' }}
-                    >
-                      {isDiscovering
-                        ? 'Revealing...'
-                        : translations.home.discover}
-                    </Button>
-                  </CardContent>
-                </Card>
-
-                <Card variant="rounded">
-                  <CardHeader>
-                    <CardTitle>{translations.home.newGameSection}</CardTitle>
-                  </CardHeader>
-                  <CardContent
-                    style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+                    <div style={{ flex: '1 1 220px' }}>
+                      <Text size="sm" color="muted">
+                        Display name
+                      </Text>
+                      <Input
+                        value={displayName}
+                        onChange={(event) =>
+                          setDisplayName(event.target.value)
+                        }
+                        placeholder="Your name"
+                      />
+                    </div>
+                    <div style={{ flex: '1 1 220px' }}>
+                      <Text size="sm" color="muted">
+                        Stored messages
+                      </Text>
+                      <Text
+                        size="lg"
+                        style={{ fontWeight: 600, color: '#e5e7eb' }}
+                      >
+                        {info
+                          ? `${info.total_messages}/${info.max_messages}`
+                          : '—'}
+                      </Text>
+                    </div>
+                    <div style={{ flex: '1 1 220px' }}>
+                      <Text size="sm" color="muted">
+                        Engine
+                      </Text>
+                      <Text
+                        size="lg"
+                        style={{ fontWeight: 600, color: '#e5e7eb' }}
+                      >
+                        {MODEL_NAME}
+                      </Text>
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '0.75rem',
+                      flexWrap: 'wrap',
+                    }}
                   >
-                    <Text size="sm" color="muted">
-                      {isGameInProgress
-                        ? 'Complete the current round before starting another duel.'
-                        : 'Reset the board so players can submit fresh secret numbers.'}
-                    </Text>
                     <Button
                       variant="secondary"
-                      onClick={startNewGame}
-                      disabled={isResetting || !api || isGameInProgress}
-                      style={{ minHeight: '3rem', maxWidth: '260px' }}
+                      onClick={loadHistory}
+                      disabled={isLoadingHistory}
                     >
-                      {isResetting
-                        ? 'Resetting...'
-                        : translations.home.startNewGame}
+                      {isLoadingHistory ? 'Refreshing…' : 'Refresh history'}
                     </Button>
-                  </CardContent>
-                </Card>
+                    <Button variant="error" onClick={handleClearChat}>
+                      Clear history
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
 
-                <Card variant="rounded">
-                  <CardHeader>
-                    <CardTitle>{translations.home.players}</CardTitle>
-                  </CardHeader>
-                  <CardContent
-                    style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+              <Card
+                variant="rounded"
+                style={{
+                  height: '60vh',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}
+              >
+                <CardHeader>
+                  <CardTitle>Conversation</CardTitle>
+                </CardHeader>
+                <CardContent
+                  style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1rem',
+                    paddingRight: '0.5rem',
+                  }}
+                >
+                  {messages.length === 0 ? (
+                    <Text size="sm" color="muted">
+                      Start the conversation by sending a message.
+                    </Text>
+                  ) : (
+                    messages.map((message) => (
+                      <MessageBubble key={message.id} message={message} />
+                    ))
+                  )}
+                  <div ref={messagesEndRef} />
+                </CardContent>
+              </Card>
+
+              <Card variant="rounded">
+                <CardHeader>
+                  <CardTitle>Send a message</CardTitle>
+                </CardHeader>
+                <CardContent
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1rem',
+                  }}
+                >
+                  <textarea
+                    value={input}
+                    onChange={(event) => setInput(event.target.value)}
+                    rows={4}
+                    placeholder="Ask the assistant anything…"
+                    style={{
+                      width: '100%',
+                      background: 'rgba(15, 23, 42, 0.6)',
+                      color: '#e5e7eb',
+                      border: '1px solid rgba(148, 163, 184, 0.2)',
+                      borderRadius: '8px',
+                      padding: '0.75rem',
+                      fontSize: '0.95rem',
+                      resize: 'vertical',
+                    }}
+                  />
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      gap: '1rem',
+                    }}
                   >
-                    {gameState && gameState.players.length > 0 ? (
-                      gameState.players.map((player) => renderPlayer(player))
-                    ) : (
-                      <Text
-                        size="sm"
-                        style={{
-                          color: '#9ca3af',
-                          textAlign: 'center',
-                          padding: '1rem 0',
-                        }}
-                      >
-                        {translations.home.noPlayers}
-                      </Text>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            </main>
+                    <Button
+                      variant="primary"
+                      onClick={handleSendMessage}
+                      disabled={
+                        !engineReady ||
+                        isGenerating ||
+                        input.trim().length === 0
+                      }
+                    >
+                      {isGenerating ? 'Generating…' : 'Send'}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </GridItem>
         </Grid>
       </div>
     </>
   );
+}
+
+function MessageBubble({
+  message,
+}: {
+  message: ConversationMessage;
+}): JSX.Element {
+  const isAssistant = message.role === 'assistant';
+  return (
+    <div
+      style={{
+        alignSelf: isAssistant ? 'flex-start' : 'flex-end',
+        maxWidth: '75%',
+        background: isAssistant
+          ? 'rgba(79, 70, 229, 0.15)'
+          : 'rgba(34, 197, 94, 0.2)',
+        border: '1px solid rgba(148, 163, 184, 0.1)',
+        borderRadius: '12px',
+        padding: '0.75rem 1rem',
+        boxShadow: '0 8px 16px -12px rgba(15, 23, 42, 0.8)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.35rem',
+      }}
+    >
+      <Text size="xs" color="muted" style={{ fontSize: '0.7rem' }}>
+        {message.sender} · {new Date(message.timestamp).toLocaleTimeString()}
+      </Text>
+      <Text
+        size="sm"
+        style={{ whiteSpace: 'pre-wrap', color: '#e5e7eb' }}
+      >
+        {message.content}
+      </Text>
+    </div>
+  );
+}
+
+function extractAssistantContent(
+  completion: webllm.types.ChatCompletion,
+): string | null {
+  const choice = completion.choices?.[0];
+  if (!choice) {
+    return null;
+  }
+
+  const content = choice.message?.content;
+  if (!content) {
+    return null;
+  }
+
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => ('text' in part ? part.text : ''))
+      .join('')
+      .trim();
+  }
+
+  return null;
+}
+
+function sanitiseRole(role: string): ConversationRole {
+  const normalised = role.trim().toLowerCase();
+  if (normalised === 'assistant' || normalised === 'system') {
+    return normalised;
+  }
+  return 'user';
 }

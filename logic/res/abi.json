@@ -1,97 +1,54 @@
 {
   "schema_version": "wasm-abi/1",
   "types": {
-    "DiscoverOutcome": {
+    "ChatInfo": {
       "kind": "record",
       "fields": [
         {
-          "name": "opponent_number",
+          "name": "total_messages",
           "type": {
-            "kind": "i64"
+            "kind": "u32"
           }
         },
         {
-          "name": "game",
+          "name": "max_messages",
           "type": {
-            "$ref": "GameView"
-          }
-        }
-      ]
-    },
-    "GamePhase": {
-      "kind": "variant",
-      "variants": [
-        {
-          "name": "Setup"
-        },
-        {
-          "name": "InProgress"
-        },
-        {
-          "name": "Finished"
-        }
-      ]
-    },
-    "GameView": {
-      "kind": "record",
-      "fields": [
-        {
-          "name": "phase",
-          "type": {
-            "$ref": "GamePhase"
-          }
-        },
-        {
-          "name": "current_turn",
-          "type": {
-            "kind": "string"
-          },
-          "nullable": true
-        },
-        {
-          "name": "winner",
-          "type": {
-            "kind": "string"
-          },
-          "nullable": true
-        },
-        {
-          "name": "players",
-          "type": {
-            "kind": "list",
-            "items": {
-              "$ref": "PlayerView"
-            }
+            "kind": "u32"
           }
         }
       ]
     },
-    "PlayerView": {
+    "ChatMessage": {
       "kind": "record",
       "fields": [
         {
           "name": "id",
           "type": {
+            "kind": "u64"
+          }
+        },
+        {
+          "name": "sender",
+          "type": {
             "kind": "string"
           }
         },
         {
-          "name": "number",
+          "name": "role",
           "type": {
-            "kind": "i64"
-          },
-          "nullable": true
-        },
-        {
-          "name": "number_submitted",
-          "type": {
-            "kind": "bool"
+            "kind": "string"
           }
         },
         {
-          "name": "discovered",
+          "name": "content",
           "type": {
-            "kind": "bool"
+            "kind": "string"
+          }
+        },
+        {
+          "name": "timestamp_ms",
+          "type": {
+            "kind": "u64"
           }
         }
       ]
@@ -106,72 +63,94 @@
       }
     },
     {
-      "name": "submit_number",
+      "name": "send_message",
       "params": [
         {
-          "name": "player_id",
+          "name": "sender",
           "type": {
             "kind": "string"
           }
         },
         {
-          "name": "number",
+          "name": "role",
           "type": {
-            "kind": "i64"
+            "kind": "string"
           }
-        }
-      ],
-      "returns": {
-        "$ref": "GameView"
-      }
-    },
-    {
-      "name": "discover_number",
-      "params": [
+        },
         {
-          "name": "player_id",
+          "name": "content",
           "type": {
             "kind": "string"
           }
         }
       ],
       "returns": {
-        "$ref": "DiscoverOutcome"
+        "$ref": "ChatMessage"
       }
     },
     {
-      "name": "game_state",
-      "params": [],
+      "name": "messages",
+      "params": [
+        {
+          "name": "offset",
+          "type": {
+            "kind": "u32"
+          },
+          "nullable": true
+        },
+        {
+          "name": "limit",
+          "type": {
+            "kind": "u32"
+          },
+          "nullable": true
+        }
+      ],
       "returns": {
-        "$ref": "GameView"
+        "kind": "list",
+        "items": {
+          "$ref": "ChatMessage"
+        }
       }
     },
     {
-      "name": "start_new_game",
+      "name": "clear_history",
       "params": [],
       "returns": {
-        "$ref": "GameView"
+        "kind": "unit"
+      }
+    },
+    {
+      "name": "set_max_messages",
+      "params": [
+        {
+          "name": "max_messages",
+          "type": {
+            "kind": "u32"
+          }
+        }
+      ],
+      "returns": {
+        "kind": "unit"
+      }
+    },
+    {
+      "name": "info",
+      "params": [],
+      "returns": {
+        "$ref": "ChatInfo"
       }
     }
   ],
   "events": [
     {
-      "name": "PlayerRegistered"
+      "name": "MessageAdded"
     },
     {
-      "name": "NumberSubmitted"
+      "name": "HistoryCleared"
     },
     {
-      "name": "NumberDiscovered"
-    },
-    {
-      "name": "TurnChanged"
-    },
-    {
-      "name": "GameFinished"
-    },
-    {
-      "name": "GameReset"
+      "name": "MaxMessagesUpdated"
     }
   ]
 }

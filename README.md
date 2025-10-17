@@ -1,6 +1,7 @@
-# Scripsiclla Number Duel
+# WebLLM Chat on Calimero
 
-Two players secretly lock a number into the contract, then take turns revealing the opponent’s pick. The higher number wins once both have discovered the other side.
+Run a fully local AI chat in your browser, backed by a Calimero contract that keeps the shared conversation history in sync across participants.  
+The Rust logic stores messages, while the Vite/React frontend streams replies from [web-llm](https://github.com/mlc-ai/web-llm) directly in the client – no external inference service required.
 
 This repository still contains two independent parts:
 
@@ -29,14 +30,13 @@ pnpm run logic:clean
 
 ### Contract capabilities
 
-- `submit_number(player_id: String, number: i64)` — registers a player (max two) and locks their number during the setup phase.
-- `discover_number(player_id: String)` — enforces turn order and reveals the opponent’s number to the caller.
-- `game_state()` — view helper returning the aggregate `GameView` (phase, current turn, players, winner).
-- `start_new_game()` — resets the stored state (available when the game is idle or finished) so a fresh duel can start.
+- `send_message(sender: String, role: String, content: String)` — appends a message to the shared history and returns the stored entry.
+- `messages(offset: Option<u32>, limit: Option<u32>)` — paginated view endpoint that streams the current history.
+- `clear_history()` — wipes all stored messages.
+- `set_max_messages(max_messages: u32)` — caps retained history (default 200, maximum 1000).
+- `info()` — lightweight metadata (total stored messages + current cap).
 
-All access is identified by the supplied `player_id`. After both submissions, the contract automatically advances to the discover phase with the first submitter acting first. When both players have taken their turn, the winner is the higher number (ties result in no winner).
-
-Events emitted: `PlayerRegistered`, `NumberSubmitted`, `NumberDiscovered`, `TurnChanged`, `GameFinished`, `GameReset`
+Events emitted: `MessageAdded`, `HistoryCleared`, `MaxMessagesUpdated`
 
 ### Build artifacts
 
@@ -57,6 +57,9 @@ pnpm --dir app dev
 ```
 
 Open the app in your browser and connect to a running node.
+
+- The chat UI streams responses using `@mlc-ai/web-llm`’s **Phi-3-mini-4k-instruct-q4f16_1-MLC** model.  
+  The first request will trigger a client-side download (hundreds of MB); subsequent chats are served from the browser cache.
 
 Docs: https://calimero-network.github.io/build/quickstart
 
@@ -147,26 +150,35 @@ pnpm add -D concurrently chokidar-cli
 
 ```json
 {
-  "method": "submit_number",
+  "method": "send_message",
   "argsJson": {
-    "player_id": "player_one",
-    "number": 42
+    "sender": "alice",
+    "role": "user",
+    "content": "Hello WebLLM!"
   }
 }
 ```
 
 ```json
 {
-  "method": "discover_number",
+  "method": "messages",
   "argsJson": {
-    "player_id": "player_one"
+    "offset": 0,
+    "limit": 50
   }
 }
 ```
 
 ```json
 {
-  "method": "game_state",
+  "method": "clear_history",
+  "argsJson": { }
+}
+```
+
+```json
+{
+  "method": "info",
   "argsJson": {}
 }
 ```

@@ -7,49 +7,26 @@ import {
 
 // Generated types
 
-export interface DiscoverOutcome {
-  opponent_number: number;
-  game: GameView;
+export interface ChatInfo {
+  total_messages: number;
+  max_messages: number;
 }
 
-export type GamePhasePayload =
-  | { name: 'Setup' }
-  | { name: 'InProgress' }
-  | { name: 'Finished' }
-
-export const GamePhase = {
-  Setup: (): GamePhasePayload => ({ name: 'Setup' }),
-  InProgress: (): GamePhasePayload => ({ name: 'InProgress' }),
-  Finished: (): GamePhasePayload => ({ name: 'Finished' }),
-} as const;
-
-export interface GameView {
-  phase: GamePhase;
-  current_turn: string | null;
-  winner: string | null;
-  players: PlayerView[];
+export interface ChatMessage {
+  id: number;
+  sender: string;
+  role: string;
+  content: string;
+  timestamp_ms: number;
 }
-
-export interface PlayerView {
-  id: string;
-  number: number | null;
-  number_submitted: boolean;
-  discovered: boolean;
-}
-
-
-
 
 
 
 
 export type AbiEvent =
-  | { name: "PlayerRegistered" }
-  | { name: "NumberSubmitted" }
-  | { name: "NumberDiscovered" }
-  | { name: "TurnChanged" }
-  | { name: "GameFinished" }
-  | { name: "GameReset" }
+  | { name: "MessageAdded" }
+  | { name: "HistoryCleared" }
+  | { name: "MaxMessagesUpdated" }
 ;
 
 
@@ -171,48 +148,60 @@ export class AbiClient {
   }
 
   /**
-   * submit_number
+   * send_message
    */
-  public async submitNumber(params: { player_id: string; number: number }): Promise<GameView> {
-    const response = await this.app.execute(this.context, 'submit_number', params);
+  public async sendMessage(params: { sender: string; role: string; content: string }): Promise<ChatMessage> {
+    const response = await this.app.execute(this.context, 'send_message', params);
     if (response.success) {
-      return response.result as GameView;
+      return response.result as ChatMessage;
     } else {
       throw new Error(response.error || 'Execution failed');
     }
   }
 
   /**
-   * discover_number
+   * messages
    */
-  public async discoverNumber(params: { player_id: string }): Promise<DiscoverOutcome> {
-    const response = await this.app.execute(this.context, 'discover_number', params);
+  public async messages(params: { offset: number | null; limit: number | null }): Promise<ChatMessage[]> {
+    const response = await this.app.execute(this.context, 'messages', params);
     if (response.success) {
-      return response.result as DiscoverOutcome;
+      return response.result as ChatMessage[];
     } else {
       throw new Error(response.error || 'Execution failed');
     }
   }
 
   /**
-   * game_state
+   * clear_history
    */
-  public async gameState(): Promise<GameView> {
-    const response = await this.app.execute(this.context, 'game_state', {});
+  public async clearHistory(): Promise<void> {
+    const response = await this.app.execute(this.context, 'clear_history', {});
     if (response.success) {
-      return response.result as GameView;
+      return response.result as void;
     } else {
       throw new Error(response.error || 'Execution failed');
     }
   }
 
   /**
-   * start_new_game
+   * set_max_messages
    */
-  public async startNewGame(): Promise<GameView> {
-    const response = await this.app.execute(this.context, 'start_new_game', {});
+  public async setMaxMessages(params: { max_messages: number }): Promise<void> {
+    const response = await this.app.execute(this.context, 'set_max_messages', params);
     if (response.success) {
-      return response.result as GameView;
+      return response.result as void;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * info
+   */
+  public async info(): Promise<ChatInfo> {
+    const response = await this.app.execute(this.context, 'info', {});
+    if (response.success) {
+      return response.result as ChatInfo;
     } else {
       throw new Error(response.error || 'Execution failed');
     }

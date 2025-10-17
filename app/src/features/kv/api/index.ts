@@ -1,12 +1,16 @@
-import { AbiClient, AbiEvent } from '../../../api/AbiClient';
+import { AbiClient } from '../../../api/AbiClient';
 import { CalimeroApp } from '@calimero-network/calimero-client';
 
 export { AbiClient };
-export type { AbiEvent };
+
+export interface ApiError {
+  code: number;
+  message: string;
+}
 
 export type ApiResult<T> =
   | { data: T; error: null }
-  | { data: null; error: { code: number; message: string } };
+  | { data: null; error: ApiError };
 
 export function isOk<T>(
   result: ApiResult<T>,
@@ -14,8 +18,8 @@ export function isOk<T>(
   return result.error === null;
 }
 
-export async function createGameClient(app: CalimeroApp): Promise<AbiClient> {
-  console.log('Creating Scripsiclla game client');
+export async function createChatClient(app: CalimeroApp): Promise<AbiClient> {
+  console.log('Creating chat client');
   let contexts = await app.fetchContexts();
   let context = contexts[0];
 
@@ -33,5 +37,3 @@ export async function createGameClient(app: CalimeroApp): Promise<AbiClient> {
 
   return new AbiClient(app, context);
 }
-
-export const createKvClient = createGameClient;

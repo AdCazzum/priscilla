@@ -1,372 +1,182 @@
 use calimero_sdk::app;
 use calimero_sdk::borsh::{BorshDeserialize, BorshSerialize};
-use calimero_sdk::serde::Serialize;
+use calimero_sdk::env;
+use calimero_sdk::serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize, Serialize)]
+const DEFAULT_MAX_MESSAGES: u32 = 200;
+const MAX_ALLOWED_MESSAGES: u32 = 1000;
+const DEFAULT_PAGE_SIZE: u32 = 50;
+const MAX_CONTENT_LENGTH: usize = 16_384;
+const MAX_SENDER_LENGTH: usize = 128;
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 #[borsh(crate = "calimero_sdk::borsh")]
-#[serde(crate = "calimero_sdk::serde", rename_all = "snake_case")]
-pub enum GamePhase {
-    Setup,
-    InProgress,
-    Finished,
-}
-
-impl GamePhase {
-    fn as_str(self) -> &'static str {
-        match self {
-            GamePhase::Setup => "setup",
-            GamePhase::InProgress => "in_progress",
-            GamePhase::Finished => "finished",
-        }
-    }
-}
-
-impl core::fmt::Display for GamePhase {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
-#[borsh(crate = "calimero_sdk::borsh")]
-struct PlayerEntry {
-    id: String,
-    number: Option<i64>,
-    discovered: bool,
-}
-
-impl PlayerEntry {
-    fn new(id: String, number: i64) -> Self {
-        Self {
-            id,
-            number: Some(number),
-            discovered: false,
-        }
-    }
-
-    fn number_submitted(&self) -> bool {
-        self.number.is_some()
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
 #[serde(crate = "calimero_sdk::serde")]
-pub struct PlayerView {
-    pub id: String,
-    pub number: Option<i64>,
-    pub number_submitted: bool,
-    pub discovered: bool,
+pub struct ChatMessage {
+    pub id: u64,
+    pub sender: String,
+    pub role: String,
+    pub content: String,
+    pub timestamp_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "calimero_sdk::serde")]
-pub struct GameView {
-    pub phase: GamePhase,
-    pub current_turn: Option<String>,
-    pub winner: Option<String>,
-    pub players: Vec<PlayerView>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(crate = "calimero_sdk::serde")]
-pub struct DiscoverOutcome {
-    pub opponent_number: i64,
-    pub game: GameView,
+pub struct ChatInfo {
+    pub total_messages: u32,
+    pub max_messages: u32,
 }
 
 #[app::state(emits = for<'a> Event<'a>)]
 #[derive(Debug, BorshSerialize, BorshDeserialize)]
 #[borsh(crate = "calimero_sdk::borsh")]
-pub struct ScripsicllaGame {
-    players: Vec<PlayerEntry>,
-    phase: GamePhase,
-    current_turn_index: Option<u8>,
-    winner: Option<String>,
+pub struct ChatState {
+    messages: Vec<ChatMessage>,
+    max_messages: u32,
+    next_id: u64,
 }
 
 #[app::event]
 pub enum Event<'a> {
-    PlayerRegistered { player_id: &'a str },
-    NumberSubmitted { player_id: &'a str },
-    NumberDiscovered {
-        player_id: &'a str,
-        target_id: &'a str,
-        value: i64,
-    },
-    TurnChanged { player_id: Option<&'a str> },
-    GameFinished { winner: Option<&'a str> },
-    GameReset,
+    MessageAdded { id: u64, sender: &'a str, role: &'a str },
+    HistoryCleared,
+    MaxMessagesUpdated { max_messages: u32 },
 }
 
 #[derive(Debug, Error, Serialize)]
 #[serde(crate = "calimero_sdk::serde")]
 #[serde(tag = "kind", content = "data")]
 pub enum Error {
-    #[error("game already has two players")]
-    GameFull,
-    #[error("player already submitted a number")]
-    NumberAlreadySubmitted,
-    #[error("player not part of the game: {0}")]
-    PlayerUnknown(String),
-    #[error("game requires both players to be ready")]
-    NotEnoughPlayers,
-    #[error("cannot submit numbers during {0}")]
-    InvalidPhase(String),
-    #[error("game already finished")]
-    GameFinished,
-    #[error("wait for your turn: {0}")]
-    NotYourTurn(String),
-    #[error("number already discovered for player: {0}")]
-    AlreadyDiscovered(String),
-    #[error("game currently in progress; finish the round before resetting")]
-    GameInProgress,
+    #[error("sender must not be empty")]
+    EmptySender,
+    #[error("message content must not be empty")]
+    EmptyContent,
+    #[error("sender too long: {0} bytes")]
+    SenderTooLong(usize),
+    #[error("content too long: {0} bytes")]
+    ContentTooLong(usize),
+    #[error("max messages must be between 1 and {MAX_ALLOWED_MESSAGES}")]
+    InvalidMaxMessages,
 }
 
 #[app::logic]
-impl ScripsicllaGame {
+impl ChatState {
     #[app::init]
-    pub fn init() -> ScripsicllaGame {
-        ScripsicllaGame {
-            players: Vec::new(),
-            phase: GamePhase::Setup,
-            current_turn_index: None,
-            winner: None,
+    pub fn init() -> ChatState {
+        ChatState {
+            messages: Vec::new(),
+            max_messages: DEFAULT_MAX_MESSAGES,
+            next_id: 0,
         }
     }
 
-    pub fn submit_number(&mut self, player_id: String, number: i64) -> app::Result<GameView> {
-        app::log!(
-            "Player {:?} attempting to submit number {:?}",
-            player_id,
-            number
-        );
-
-        if self.phase != GamePhase::Setup {
-            app::bail!(Error::InvalidPhase(self.phase.to_string()));
+    pub fn send_message(
+        &mut self,
+        sender: String,
+        role: String,
+        content: String,
+    ) -> app::Result<ChatMessage> {
+        let trimmed_sender = sender.trim();
+        if trimmed_sender.is_empty() {
+            app::bail!(Error::EmptySender);
         }
 
-        let maybe_idx = self.find_player_index(&player_id);
-        let idx = if let Some(idx) = maybe_idx {
-            let entry = self
-                .players
-                .get_mut(idx)
-                .expect("player index should be in range");
-            if entry.number_submitted() {
-                app::bail!(Error::NumberAlreadySubmitted);
-            }
-            entry.number = Some(number);
-            idx
-        } else {
-            if self.players.len() >= 2 {
-                app::bail!(Error::GameFull);
-            }
-            let entry = PlayerEntry::new(player_id.clone(), number);
-            self.players.push(entry);
-            let idx = self.players.len() - 1;
-            app::emit!(Event::PlayerRegistered {
-                player_id: &player_id
-            });
-            idx
+        if trimmed_sender.len() > MAX_SENDER_LENGTH {
+            app::bail!(Error::SenderTooLong(trimmed_sender.len()));
+        }
+
+        let trimmed_content = content.trim();
+        if trimmed_content.is_empty() {
+            app::bail!(Error::EmptyContent);
+        }
+
+        if trimmed_content.len() > MAX_CONTENT_LENGTH {
+            app::bail!(Error::ContentTooLong(trimmed_content.len()));
+        }
+
+        let timestamp_ms = env::time_now() as u64;
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+
+        let message = ChatMessage {
+            id,
+            sender: trimmed_sender.to_owned(),
+            role: role.trim().to_owned(),
+            content: trimmed_content.to_owned(),
+            timestamp_ms,
         };
 
-        app::emit!(Event::NumberSubmitted {
-            player_id: &self.players[idx].id
+        self.push_message(message.clone());
+
+        app::emit!(Event::MessageAdded {
+            id,
+            sender: &message.sender,
+            role: &message.role,
         });
 
-        if self.players_ready() {
-            self.phase = GamePhase::InProgress;
-            if self.current_turn_index.is_none() {
-                self.current_turn_index = Some(0);
-                if let Some(current) = self.current_player_id() {
-                    app::emit!(Event::TurnChanged {
-                        player_id: Some(current),
-                    });
-                }
-            }
-        }
-
-        Ok(self.view())
+        Ok(message)
     }
 
-    pub fn discover_number(&mut self, player_id: String) -> app::Result<DiscoverOutcome> {
-        app::log!("Player {:?} attempts to discover", player_id);
+    pub fn messages(
+        &self,
+        offset: Option<u32>,
+        limit: Option<u32>,
+    ) -> app::Result<Vec<ChatMessage>> {
+        let total = self.messages.len() as u32;
+        let start = offset.unwrap_or(0).min(total) as usize;
+        let capped_limit = limit
+            .unwrap_or(DEFAULT_PAGE_SIZE)
+            .clamp(1, self.max_messages)
+            as usize;
 
-        match self.phase {
-            GamePhase::Setup => app::bail!(Error::NotEnoughPlayers),
-            GamePhase::Finished => app::bail!(Error::GameFinished),
-            GamePhase::InProgress => {}
+        Ok(self
+            .messages
+            .iter()
+            .skip(start)
+            .take(capped_limit)
+            .cloned()
+            .collect())
+    }
+
+    pub fn clear_history(&mut self) -> app::Result<()> {
+        if self.messages.is_empty() {
+            return Ok(());
         }
 
-        if !self.players_ready() {
-            app::bail!(Error::NotEnoughPlayers);
+        self.messages.clear();
+        app::emit!(Event::HistoryCleared);
+        Ok(())
+    }
+
+    pub fn set_max_messages(&mut self, max_messages: u32) -> app::Result<()> {
+        if max_messages == 0 || max_messages > MAX_ALLOWED_MESSAGES {
+            app::bail!(Error::InvalidMaxMessages);
         }
 
-        let player_index = self
-            .find_player_index(&player_id)
-            .ok_or_else(|| Error::PlayerUnknown(player_id.clone()))?;
+        self.max_messages = max_messages;
+        self.enforce_capacity();
+        app::emit!(Event::MaxMessagesUpdated { max_messages });
+        Ok(())
+    }
 
-        let current_turn_index = self
-            .current_turn_index
-            .map(usize::from)
-            .expect("current turn must be set while game is in progress");
-
-        if player_index != current_turn_index {
-            let current_id = &self.players[current_turn_index].id;
-            app::bail!(Error::NotYourTurn(current_id.clone()));
-        }
-
-        let opponent_index = Self::opponent_index(player_index);
-        let (opponent_id, opponent_number) = {
-            let opponent_entry = self
-                .players
-                .get(opponent_index)
-                .expect("opponent must exist");
-            let opponent_number = opponent_entry
-                .number
-                .expect("opponent must have submitted a number");
-            (opponent_entry.id.clone(), opponent_number)
-        };
-
-        let player_id_for_event = {
-            let player_entry = self
-                .players
-                .get_mut(player_index)
-                .expect("player index must be valid");
-
-            if player_entry.discovered {
-                app::bail!(Error::AlreadyDiscovered(player_entry.id.clone()));
-            }
-
-            player_entry.discovered = true;
-            player_entry.id.clone()
-        };
-
-        app::emit!(Event::NumberDiscovered {
-            player_id: &player_id_for_event,
-            target_id: &opponent_id,
-            value: opponent_number,
-        });
-
-        if self.players[opponent_index].discovered {
-            self.phase = GamePhase::Finished;
-            self.current_turn_index = None;
-            self.winner = self.determine_winner();
-            app::emit!(Event::TurnChanged { player_id: None });
-            app::emit!(Event::GameFinished {
-                winner: self.winner.as_deref(),
-            });
-        } else {
-            self.current_turn_index =
-                Some(u8::try_from(opponent_index).expect("only two players are supported"));
-            if let Some(current) = self.current_player_id() {
-                app::emit!(Event::TurnChanged {
-                    player_id: Some(current),
-                });
-            }
-        }
-
-        Ok(DiscoverOutcome {
-            opponent_number,
-            game: self.view(),
+    pub fn info(&self) -> app::Result<ChatInfo> {
+        Ok(ChatInfo {
+            total_messages: self.messages.len() as u32,
+            max_messages: self.max_messages,
         })
     }
 
-    pub fn game_state(&self) -> app::Result<GameView> {
-        app::log!("Fetching game state");
-        Ok(self.view())
+    fn push_message(&mut self, message: ChatMessage) {
+        self.messages.push(message);
+        self.enforce_capacity();
     }
 
-    pub fn start_new_game(&mut self) -> app::Result<GameView> {
-        app::log!("Starting a new game, resetting state");
-
-        if self.phase == GamePhase::InProgress {
-            app::bail!(Error::GameInProgress);
-        }
-
-        self.players.clear();
-        self.phase = GamePhase::Setup;
-        self.current_turn_index = None;
-        self.winner = None;
-
-        app::emit!(Event::GameReset);
-
-        Ok(self.view())
-    }
-
-    fn players_ready(&self) -> bool {
-        self.players.len() == 2 && self.players.iter().all(PlayerEntry::number_submitted)
-    }
-
-    fn find_player_index(&self, player_id: &str) -> Option<usize> {
-        self.players
-            .iter()
-            .position(|player| player.id == player_id)
-    }
-
-    fn opponent_index(player_index: usize) -> usize {
-        match player_index {
-            0 => 1,
-            1 => 0,
-            _ => panic!("only two players are supported"),
-        }
-    }
-
-    fn current_player_id(&self) -> Option<&str> {
-        self.current_turn_index
-            .map(usize::from)
-            .and_then(|idx| self.players.get(idx))
-            .map(|player| player.id.as_str())
-    }
-
-    fn determine_winner(&self) -> Option<String> {
-        if self.players.len() < 2 {
-            return None;
-        }
-
-        let first = &self.players[0];
-        let second = &self.players[1];
-
-        let Some(first_number) = first.number else {
-            return None;
-        };
-        let Some(second_number) = second.number else {
-            return None;
-        };
-
-        if first_number > second_number {
-            Some(first.id.clone())
-        } else if second_number > first_number {
-            Some(second.id.clone())
-        } else {
-            None
-        }
-    }
-
-    fn view(&self) -> GameView {
-        let phase = self.phase;
-        let current_turn = self.current_player_id().map(str::to_owned);
-        let winner = self.winner.clone();
-        let players = self
-            .players
-            .iter()
-            .map(|player| PlayerView {
-                id: player.id.clone(),
-                number: if player.discovered || phase == GamePhase::Finished {
-                    player.number
-                } else {
-                    None
-                },
-                number_submitted: player.number_submitted(),
-                discovered: player.discovered,
-            })
-            .collect();
-
-        GameView {
-            phase,
-            current_turn,
-            winner,
-            players,
+    fn enforce_capacity(&mut self) {
+        let max = self.max_messages as usize;
+        if self.messages.len() > max {
+            let overflow = self.messages.len() - max;
+            self.messages.drain(0..overflow);
         }
     }
 }
