@@ -1,19 +1,19 @@
 {
   "schema_version": "wasm-abi/1",
   "types": {
-    "ChatInfo": {
+    "AnswerResult": {
       "kind": "record",
       "fields": [
         {
-          "name": "total_messages",
+          "name": "message",
           "type": {
-            "kind": "u32"
+            "$ref": "ChatMessage"
           }
         },
         {
-          "name": "max_messages",
+          "name": "guess_was_correct",
           "type": {
-            "kind": "u32"
+            "kind": "bool"
           }
         }
       ]
@@ -52,6 +52,94 @@
           }
         }
       ]
+    },
+    "GameInfo": {
+      "kind": "record",
+      "fields": [
+        {
+          "name": "admin",
+          "type": {
+            "kind": "string"
+          },
+          "nullable": true
+        },
+        {
+          "name": "player_one",
+          "type": {
+            "kind": "string"
+          },
+          "nullable": true
+        },
+        {
+          "name": "player_two",
+          "type": {
+            "kind": "string"
+          },
+          "nullable": true
+        },
+        {
+          "name": "stage",
+          "type": {
+            "$ref": "GameStage"
+          }
+        },
+        {
+          "name": "secret_set",
+          "type": {
+            "kind": "bool"
+          }
+        },
+        {
+          "name": "total_messages",
+          "type": {
+            "kind": "u32"
+          }
+        },
+        {
+          "name": "max_messages",
+          "type": {
+            "kind": "u32"
+          }
+        },
+        {
+          "name": "awaiting_player",
+          "type": {
+            "kind": "string"
+          },
+          "nullable": true
+        }
+      ]
+    },
+    "GameStage": {
+      "kind": "variant",
+      "variants": [
+        {
+          "name": "NotStarted"
+        },
+        {
+          "name": "WaitingForSecret"
+        },
+        {
+          "name": "WaitingForQuestion"
+        },
+        {
+          "name": "WaitingForAnswer"
+        },
+        {
+          "name": "Completed"
+        }
+      ]
+    },
+    "GuessResult": {
+      "kind": "record",
+      "fields": [
+        {
+          "name": "guess_was_correct",
+          "type": {
+            "kind": "bool"
+          }
+        }
+      ]
     }
   },
   "methods": [
@@ -63,16 +151,56 @@
       }
     },
     {
-      "name": "send_message",
+      "name": "create_game",
       "params": [
         {
-          "name": "sender",
+          "name": "admin",
           "type": {
             "kind": "string"
           }
         },
         {
-          "name": "role",
+          "name": "player_one",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "player_two",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "$ref": "GameInfo"
+      }
+    },
+    {
+      "name": "set_secret",
+      "params": [
+        {
+          "name": "requester",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "secret",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "$ref": "GameInfo"
+      }
+    },
+    {
+      "name": "submit_question",
+      "params": [
+        {
+          "name": "player",
           "type": {
             "kind": "string"
           }
@@ -86,6 +214,33 @@
       ],
       "returns": {
         "$ref": "ChatMessage"
+      }
+    },
+    {
+      "name": "submit_answer",
+      "params": [
+        {
+          "name": "player",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "content",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "guess",
+          "type": {
+            "kind": "string"
+          },
+          "nullable": true
+        }
+      ],
+      "returns": {
+        "$ref": "AnswerResult"
       }
     },
     {
@@ -129,7 +284,14 @@
     },
     {
       "name": "clear_history",
-      "params": [],
+      "params": [
+        {
+          "name": "requester",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
       "returns": {
         "kind": "unit"
       }
@@ -137,6 +299,12 @@
     {
       "name": "set_max_messages",
       "params": [
+        {
+          "name": "requester",
+          "type": {
+            "kind": "string"
+          }
+        },
         {
           "name": "max_messages",
           "type": {
@@ -149,10 +317,45 @@
       }
     },
     {
-      "name": "info",
+      "name": "game_info",
       "params": [],
       "returns": {
-        "$ref": "ChatInfo"
+        "$ref": "GameInfo"
+      }
+    },
+    {
+      "name": "check_guess",
+      "params": [
+        {
+          "name": "guess",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "$ref": "GuessResult"
+      }
+    },
+    {
+      "name": "get_secret",
+      "params": [
+        {
+          "name": "requester",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ],
+      "returns": {
+        "kind": "string"
+      }
+    },
+    {
+      "name": "debug_reveal_secret",
+      "params": [],
+      "returns": {
+        "kind": "string"
       }
     }
   ],
@@ -164,7 +367,16 @@
       "name": "HistoryCleared"
     },
     {
-      "name": "MaxMessagesUpdated"
+      "name": "GameCreated"
+    },
+    {
+      "name": "SecretSet"
+    },
+    {
+      "name": "SecretGuessed"
+    },
+    {
+      "name": "StageChanged"
     }
   ]
 }
