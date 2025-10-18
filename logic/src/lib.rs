@@ -139,6 +139,14 @@ impl ChatState {
             .collect())
     }
 
+    pub fn message_by_id(&self, id: u64) -> app::Result<Option<ChatMessage>> {
+        Ok(self
+            .messages
+            .iter()
+            .find(|message| message.id == id)
+            .cloned())
+    }
+
     pub fn clear_history(&mut self) -> app::Result<()> {
         if self.messages.is_empty() {
             return Ok(());

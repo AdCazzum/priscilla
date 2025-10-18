@@ -114,6 +114,20 @@
       }
     },
     {
+      "name": "message_by_id",
+      "params": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "u64"
+          }
+        }
+      ],
+      "returns": {
+        "$ref": "ChatMessage"
+      }
+    },
+    {
       "name": "clear_history",
       "params": [],
       "returns": {
