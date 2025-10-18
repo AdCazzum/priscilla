@@ -1,0 +1,30 @@
+[
+  {
+    "id": "test-websocket-001",
+    "query": "What is the difference between Intel SGX and Intel TDX?",
+    "timestamp": 1760800000000,
+    "metadata": {
+      "userId": "test-user-ws",
+      "priority": "high",
+      "source": "websocket-test"
+    }
+  },
+  {
+    "id": "test-websocket-002",
+    "query": "How does iExec ensure confidentiality for AI computations?",
+    "timestamp": 1760800001000,
+    "metadata": {
+      "userId": "test-user-ws2",
+      "category": "security"
+    }
+  },
+  {
+    "id": "test-websocket-003",
+    "query": "Explain the benefits of using Web3Mail for privacy-preserving communication",
+    "timestamp": 1760800002000,
+    "metadata": {
+      "userId": "test-user-ws3",
+      "category": "products"
+    }
+  }
+]

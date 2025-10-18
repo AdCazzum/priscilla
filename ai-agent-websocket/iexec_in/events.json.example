@@ -1,0 +1,49 @@
+[
+  {
+    "id": "event-001",
+    "query": "What is iExec and how does it enable confidential computing?",
+    "timestamp": 1700000000000,
+    "metadata": {
+      "userId": "user-123",
+      "priority": "high",
+      "source": "api"
+    }
+  },
+  {
+    "id": "event-002",
+    "query": "How can I use DataProtector to monetize my data?",
+    "timestamp": 1700000001000,
+    "metadata": {
+      "userId": "user-456",
+      "source": "webhook"
+    }
+  },
+  {
+    "id": "event-003",
+    "query": "Explain the iExec Voucher system and how it works",
+    "timestamp": 1700000002000,
+    "metadata": {
+      "userId": "user-789",
+      "category": "tokenomics"
+    }
+  },
+  {
+    "id": "event-004",
+    "query": "What are Trusted Execution Environments (TEEs) and why are they important?",
+    "timestamp": 1700000003000,
+    "metadata": {
+      "userId": "user-101",
+      "priority": "medium"
+    }
+  },
+  {
+    "id": "event-005",
+    "query": "How do I deploy an AI agent using the iApp Generator?",
+    "timestamp": 1700000004000,
+    "metadata": {
+      "userId": "user-202",
+      "category": "development",
+      "tags": ["ai", "deployment"]
+    }
+  }
+]
