@@ -50,8 +50,18 @@ interface StreamEventEntry {
   name: string;
   raw: string | null;
   parsed: unknown;
+  event: unknown;
+  metadata: EventMessageMetadata[];
   timestamp: number;
 }
+
+type EventMessageMetadata = {
+  id: number;
+  role: string;
+  sender: string;
+  content?: string | null;
+  timestampMs?: number | null;
+};
 
 const MODEL_NAME = 'Phi-3-mini-4k-instruct-q4f16_1-MLC';
 const MAX_HISTORY = 200;
@@ -76,10 +86,13 @@ export default function HomePage(): JSX.Element {
     useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [eventLog, setEventLog] = useState<StreamEventEntry[]>([]);
   const [contextIds, setContextIds] = useState<string[]>([]);
+  const [isEventPanelCollapsed, setIsEventPanelCollapsed] =
+    useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const messagesRef = useRef<ConversationMessage[]>([]);
   const respondedMessageIdsRef = useRef<Set<string>>(new Set());
+  const pendingAssistantRef = useRef<Map<string, string>>(new Map());
 
   const connectionTarget = useMemo(() => {
     if (!appUrl) {
@@ -205,33 +218,38 @@ export default function HomePage(): JSX.Element {
   }, [apiClient, loadHistory]);
 
   const appendStreamEvent = useCallback(
-    (name: string, payload: unknown) => {
-      let parsed: unknown = payload;
+    (name: string, payload: unknown, original?: unknown) => {
+      const normalised = normaliseEventPayload(payload);
+
+      let parsed: unknown = normalised;
       let raw: string | null = null;
 
-      if (typeof payload === 'string') {
-        raw = payload;
-        if (payload.length > 0) {
+      if (typeof normalised === 'string') {
+        raw = normalised;
+        if (normalised.length > 0) {
           try {
-            parsed = JSON.parse(payload);
+            parsed = JSON.parse(normalised);
           } catch (_error) {
-            parsed = payload;
+            parsed = normalised;
           }
         }
-      } else if (payload !== null && payload !== undefined) {
+      } else if (normalised !== null && normalised !== undefined) {
         try {
-          raw = JSON.stringify(payload);
+          raw = JSON.stringify(normalised, null, 2);
         } catch (_error) {
-          raw = String(payload);
+          raw = String(normalised);
         }
       }
 
       setEventLog((previous) => {
+        const metadata = extractMessageMetadata(original ?? normalised);
         const entry: StreamEventEntry = {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           name,
           raw,
           parsed,
+          event: original ?? payload,
+          metadata,
           timestamp: Date.now(),
         };
         const next = [entry, ...previous];
@@ -257,6 +275,12 @@ export default function HomePage(): JSX.Element {
       });
     }
   }, [app, show]);
+
+  useEffect(() => {
+    if (apiClient) {
+      void fetchSubscriptionContexts();
+    }
+  }, [apiClient, fetchSubscriptionContexts]);
 
   useEffect(() => {
     if (!app || !isAuthenticated) {
@@ -344,9 +368,38 @@ export default function HomePage(): JSX.Element {
       respondedMessageIdsRef.current.add(triggerMessage.id);
       setIsGenerating(true);
 
+      const placeholderId = `assistant-pending-${triggerMessage.id}`;
+      pendingAssistantRef.current.set(triggerMessage.id, placeholderId);
+
+      const placeholder: ConversationMessage = {
+        id: placeholderId,
+        role: 'assistant',
+        content: 'Generating response…',
+        sender: 'assistant',
+        timestamp: Date.now(),
+      };
+
+      const withPlaceholder = upsertMessage(
+        removeMessageById(messagesRef.current, placeholderId),
+        placeholder,
+      );
+      messagesRef.current = withPlaceholder;
+      setMessages(withPlaceholder);
+      appendStreamEvent('LLM generating', {
+        triggerId: triggerMessage.id,
+        content: triggerMessage.content,
+        sender: triggerMessage.sender,
+      });
+
       try {
-        const history = [...messagesRef.current];
+        const history = messagesRef.current.filter(
+          (message) => message.id !== placeholderId,
+        );
         const llmMessages = buildLlmContext(history);
+        const lastMessage = llmMessages[llmMessages.length - 1];
+        if (!lastMessage || lastMessage.role !== 'user') {
+          throw new Error('Conversation last turn is not a user message');
+        }
         const completion = await engine.chat.completions.create({
           messages: llmMessages,
           temperature: 0.7,
@@ -370,13 +423,41 @@ export default function HomePage(): JSX.Element {
             ...assistantMessage,
             id: `local-${Date.now()}`,
           };
+        pendingAssistantRef.current.delete(triggerMessage.id);
 
-        setMessages((previous) =>
-          upsertMessage(previous, conversationAssistant),
+        const withoutPlaceholder = removeMessageById(
+          messagesRef.current,
+          placeholderId,
         );
+        const finalList = upsertMessage(
+          withoutPlaceholder,
+          conversationAssistant,
+        );
+        messagesRef.current = finalList;
+        setMessages(finalList);
+        appendStreamEvent('LLM response ready', {
+          triggerId: triggerMessage.id,
+          responseId: conversationAssistant.id,
+        });
       } catch (error) {
         console.error('Failed to generate assistant response', error);
         respondedMessageIdsRef.current.delete(triggerMessage.id);
+        const placeholderIdExisting = pendingAssistantRef.current.get(
+          triggerMessage.id,
+        );
+        if (placeholderIdExisting) {
+          pendingAssistantRef.current.delete(triggerMessage.id);
+          const withoutPlaceholder = removeMessageById(
+            messagesRef.current,
+            placeholderIdExisting,
+          );
+          messagesRef.current = withoutPlaceholder;
+          setMessages(withoutPlaceholder);
+        }
+        appendStreamEvent('LLM response failed', {
+          triggerId: triggerMessage.id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
         show({
           title: 'The assistant failed to respond',
           variant: 'error',
@@ -386,6 +467,7 @@ export default function HomePage(): JSX.Element {
       }
     },
     [
+      appendStreamEvent,
       buildLlmContext,
       engine,
       engineReady,
@@ -397,10 +479,16 @@ export default function HomePage(): JSX.Element {
   const handleIncomingStoredMessage = useCallback(
     (stored: StoredMessage) => {
       const conversationMessage = normaliseStoredMessage(stored);
-      const nextMessages = upsertMessage(
-        messagesRef.current,
-        conversationMessage,
-      );
+      const messageKey = conversationMessage.id;
+
+      const placeholderId = pendingAssistantRef.current.get(messageKey);
+      let baseList = messagesRef.current;
+      if (placeholderId) {
+        baseList = removeMessageById(baseList, placeholderId);
+        pendingAssistantRef.current.delete(messageKey);
+      }
+
+      const nextMessages = upsertMessage(baseList, conversationMessage);
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
 
@@ -411,36 +499,123 @@ export default function HomePage(): JSX.Element {
     [generateAssistantResponse, normaliseStoredMessage],
   );
 
-  const extractMessagesFromEvent = useCallback(
-    (event: unknown): Array<{ id: number; role: string; sender: string }> => {
-      if (!event || typeof event !== 'object') {
-        return [];
-      }
+  const processMessageMetadata = useCallback(
+    async (metadataList: EventMessageMetadata[]) => {
+      await Promise.all(
+        metadataList.map(async (metadata) => {
+          const storedId = `stored-${metadata.id}`;
+          const existing = messagesRef.current.find(
+            (message) => message.id === storedId,
+          );
 
-      const record = event as Record<string, unknown>;
-      if (record.type !== 'ExecutionEvent') {
-        return [];
-      }
+          let stored: StoredMessage | null = null;
+          if (existing) {
+            stored = {
+              id: metadata.id,
+              sender: existing.sender,
+              role: existing.role,
+              content: existing.content,
+              timestamp_ms: existing.timestamp,
+            };
+          } else if (metadata.content != null) {
+            stored = {
+              id: metadata.id,
+              sender: metadata.sender,
+              role: metadata.role,
+              content: metadata.content ?? '',
+              timestamp_ms:
+                typeof metadata.timestampMs === 'number'
+                  ? metadata.timestampMs
+                  : Date.now(),
+            };
+          } else {
+            stored = await fetchMessageById(metadata.id);
+          }
 
-      const data = record.data as { events?: unknown[] } | undefined;
-      if (!data || !Array.isArray(data.events)) {
-        return [];
-      }
-
-      return data.events
-        .map((item) => item as Record<string, unknown>)
-        .filter((item) => (item.event ?? item.name) === 'MessageAdded')
-        .map((item) => {
-          const payload = item.data as Record<string, unknown> | undefined;
-          return {
-            id: Number(payload?.id ?? payload?.messageId ?? payload?.message_id ?? -1),
-            role: String(payload?.role ?? ''),
-            sender: String(payload?.sender ?? ''),
-          };
-        })
-        .filter((entry) => Number.isFinite(entry.id) && entry.id >= 0);
+          if (stored) {
+            handleIncomingStoredMessage(stored);
+          }
+        }),
+      );
     },
-    [],
+    [fetchMessageById, handleIncomingStoredMessage],
+  );
+
+  const processEventMetadata = useCallback(
+    async (metadataList: EventMessageMetadata[]) => {
+      if (metadataList.length === 0) {
+        return;
+      }
+
+      const unseenMetadata = metadataList.filter((metadata) => {
+        const storedId = `stored-${metadata.id}`;
+        return !messagesRef.current.some(
+          (message) => message.id === storedId,
+        );
+      });
+
+      const toProcess =
+        unseenMetadata.length > 0 ? unseenMetadata : metadataList;
+
+      await processMessageMetadata(toProcess);
+    },
+    [processMessageMetadata],
+  );
+
+  const handleGenerateFromEvent = useCallback(
+    async (entry: StreamEventEntry) => {
+      const source = entry.event ?? entry.parsed ?? entry.raw;
+      if (!source) {
+        show({
+          title: 'Evento senza payload da processare',
+          variant: 'warning',
+        });
+        return;
+      }
+
+      const metadata =
+        entry.metadata.length > 0
+          ? entry.metadata
+          : extractMessageMetadata(source);
+
+      if (metadata.length > 0) {
+        await processMessageMetadata(metadata);
+
+        const includesUser = metadata.some(
+          (meta) => sanitiseRole(meta.role) === 'user',
+        );
+        if (includesUser) {
+          return;
+        }
+      }
+
+      await loadHistory();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const latestUser = [...messagesRef.current]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === 'user' &&
+            !respondedMessageIdsRef.current.has(message.id),
+        );
+
+      if (!latestUser) {
+        show({
+          title: 'Nessun messaggio utente da processare',
+          variant: 'warning',
+        });
+        return;
+      }
+
+      await generateAssistantResponse(latestUser);
+    },
+    [
+      generateAssistantResponse,
+      loadHistory,
+      processMessageMetadata,
+      show,
+    ],
   );
 
   useEffect(() => {
@@ -459,36 +634,11 @@ export default function HomePage(): JSX.Element {
           : null;
       const eventName =
         (asRecord?.type as string | undefined) ?? 'contract-event';
-      appendStreamEvent(eventName, event);
+      appendStreamEvent(eventName, event, event);
 
-      const eventMessages = extractMessagesFromEvent(event);
+      const eventMessages = extractMessageMetadata(event);
       if (eventMessages.length > 0) {
-        void Promise.all(
-          eventMessages.map(async (metadata) => {
-            const storedId = `stored-${metadata.id}`;
-            const existing = messagesRef.current.find(
-              (message) => message.id === storedId,
-            );
-
-            let stored: StoredMessage | null = null;
-            if (existing) {
-              stored = {
-                id: metadata.id,
-                sender: existing.sender,
-                role: existing.role,
-                content: existing.content,
-                timestamp_ms: existing.timestamp,
-              };
-            } else {
-              stored = await fetchMessageById(metadata.id);
-            }
-
-            if (stored) {
-              appendStreamEvent('MessageAdded', stored);
-              handleIncomingStoredMessage(stored);
-            }
-          }),
-        );
+        void processEventMetadata(eventMessages);
       }
     };
 
@@ -503,9 +653,8 @@ export default function HomePage(): JSX.Element {
     app,
     appendStreamEvent,
     contextIds,
-    extractMessagesFromEvent,
-    fetchMessageById,
-    handleIncomingStoredMessage,
+    processEventMetadata,
+    extractMessageMetadata,
     isAuthenticated,
   ]);
 
@@ -543,6 +692,7 @@ export default function HomePage(): JSX.Element {
       setMessages([]);
       messagesRef.current = [];
       respondedMessageIdsRef.current.clear();
+      pendingAssistantRef.current.clear();
       show({
         title: 'Chat history cleared',
         variant: 'success',
@@ -700,20 +850,42 @@ export default function HomePage(): JSX.Element {
 
               <Card variant="rounded">
                 <CardHeader>
-                  <CardTitle>Node Event Stream</CardTitle>
-                </CardHeader>
-                <CardContent
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '1rem',
-                  }}
-                >
                   <div
                     style={{
                       display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      width: '100%',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    <CardTitle style={{ margin: 0 }}>Node Event Stream</CardTitle>
+                    <Button
+                      variant="ghost"
+                      onClick={() =>
+                        setIsEventPanelCollapsed(
+                          (currentCollapsed) => !currentCollapsed,
+                        )
+                      }
+                      style={{ paddingInline: '0.5rem' }}
+                    >
+                      {isEventPanelCollapsed ? 'Expand' : 'Collapse'}
+                    </Button>
+                  </div>
+                </CardHeader>
+                {!isEventPanelCollapsed && (
+                  <CardContent
+                    style={{
+                      display: 'flex',
                       flexDirection: 'column',
-                      gap: '0.75rem',
+                      gap: '1rem',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.75rem',
                     }}
                   >
                     <div
@@ -789,13 +961,28 @@ export default function HomePage(): JSX.Element {
                         Nessun evento ricevuto finora.
                       </Text>
                     ) : (
-                      eventLog.map((entry) => (
-                        <EventRow key={entry.id} entry={entry} />
-                      ))
+                      eventLog.map((entry) => {
+                        const metadata =
+                          entry.metadata.length > 0
+                            ? entry.metadata
+                            : extractMessageMetadata(
+                                entry.event ?? entry.parsed ?? entry.raw,
+                              );
+                        return (
+                          <EventRow
+                            key={entry.id}
+                            entry={entry}
+                            metadata={metadata}
+                            isGenerating={isGenerating}
+                            onGenerate={handleGenerateFromEvent}
+                          />
+                        );
+                      })
                     )}
                   </div>
                 </CardContent>
-              </Card>
+              )}
+            </Card>
 
               <Card
                 variant="rounded"
@@ -972,8 +1159,141 @@ function upsertMessage(
   return next;
 }
 
-function EventRow({ entry }: { entry: StreamEventEntry }): JSX.Element {
+function removeMessageById(
+  list: ConversationMessage[],
+  id: string,
+): ConversationMessage[] {
+  if (!list.some((message) => message.id === id)) {
+    return list;
+  }
+
+  return list.filter((message) => message.id !== id);
+}
+
+function extractStoredMessageKey(messageId: string): string {
+  return messageId;
+}
+
+function decodeByteArray(data: unknown): unknown {
+  if (Array.isArray(data) && data.every((value) => typeof value === 'number')) {
+    try {
+      const decodedString = new TextDecoder().decode(new Uint8Array(data));
+      try {
+        return JSON.parse(decodedString);
+      } catch (_error) {
+        return decodedString;
+      }
+    } catch (_error) {
+      return data;
+    }
+  }
+
+  return data;
+}
+
+function normaliseEventPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') {
+    return payload;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (record.type === 'ExecutionEvent' && record.data) {
+    const data = record.data as Record<string, unknown>;
+    const events = Array.isArray(data.events) ? data.events : [];
+    const decodedEvents = events.map((eventEntry) => {
+      if (!eventEntry || typeof eventEntry !== 'object') {
+        return eventEntry;
+      }
+      const eventRecord = eventEntry as Record<string, unknown>;
+      return {
+        ...eventRecord,
+        data: decodeByteArray(eventRecord.data),
+      };
+    });
+
+    return {
+      ...record,
+      data: {
+        ...data,
+        events: decodedEvents,
+      },
+    };
+  }
+
+  return payload;
+}
+
+function extractMessageMetadata(
+  event: unknown,
+): EventMessageMetadata[] {
+  if (!event || typeof event !== 'object') {
+    return [];
+  }
+
+  const record = event as Record<string, unknown>;
+  const rawEvents = (() => {
+    if (record.type === 'ExecutionEvent' && record.data) {
+      const data = record.data as { events?: unknown[] };
+      return Array.isArray(data.events) ? data.events : [];
+    }
+    if (record.type === 'StateMutation' && record.data) {
+      const data = record.data as { events?: unknown[] };
+      return Array.isArray(data.events) ? data.events : [];
+    }
+    return [];
+  })();
+
+  return rawEvents
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const eventRecord = item as Record<string, unknown>;
+      if ((eventRecord.event ?? eventRecord.name) !== 'MessageAdded') {
+        return null;
+      }
+
+      const decoded = decodeByteArray(eventRecord.data);
+      if (!decoded || typeof decoded !== 'object') {
+        return null;
+      }
+      const payload = decoded as Record<string, unknown>;
+      const metadata: EventMessageMetadata = {
+        id: Number(payload.id ?? payload.messageId ?? payload.message_id ?? -1),
+        role: String(payload.role ?? ''),
+        sender: String(payload.sender ?? ''),
+        content: typeof payload.content === 'string' ? payload.content : null,
+        timestampMs: typeof payload.timestamp_ms === 'number'
+          ? payload.timestamp_ms
+          : null,
+      };
+      return metadata;
+    })
+    .filter((entry): entry is EventMessageMetadata =>
+      !!entry && Number.isFinite(entry.id) && entry.id >= 0,
+    );
+}
+
+function EventRow({
+  entry,
+  metadata,
+  onGenerate,
+  isGenerating,
+}: {
+  entry: StreamEventEntry;
+  metadata: EventMessageMetadata[];
+  onGenerate?: (entry: StreamEventEntry) => void;
+  isGenerating: boolean;
+}): JSX.Element {
   const { name, parsed, raw, timestamp } = entry;
+  const isStateMutation =
+    entry.event &&
+    typeof entry.event === 'object' &&
+    (entry.event as { type?: unknown }).type === 'StateMutation';
+  const canTriggerGeneration =
+    isStateMutation ||
+    metadata.some((meta) => sanitiseRole(meta.role) === 'user');
 
   let body: JSX.Element;
   if (parsed && typeof parsed === 'object') {
@@ -1027,23 +1347,43 @@ function EventRow({ entry }: { entry: StreamEventEntry }): JSX.Element {
         style={{
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'baseline',
+          alignItems: 'center',
           gap: '0.75rem',
           flexWrap: 'wrap',
         }}
       >
-        <Text
-          size="sm"
+        <div
           style={{
-            color: '#93c5fd',
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            fontSize: '0.7rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            flexWrap: 'wrap',
           }}
         >
-          {name}
-        </Text>
+          <Text
+            size="sm"
+            style={{
+              color: '#93c5fd',
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              fontSize: '0.7rem',
+            }}
+          >
+            {name}
+          </Text>
+          {canTriggerGeneration && onGenerate && (
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={() => onGenerate(entry)}
+              disabled={isGenerating}
+              style={{ fontSize: '0.7rem', paddingInline: '0.75rem' }}
+            >
+              Trigger LLM
+            </Button>
+          )}
+        </div>
         <Text size="xs" color="muted">
           {new Date(timestamp).toLocaleTimeString()}
         </Text>
