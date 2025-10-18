@@ -66,46 +66,77 @@ steps:
     invitee_id: "{{public_key}}"
     invitation: "{{invitation}}"
 
-  # Step 7: Node 1 posts a chat message
-  - name: Send Message from Node 1
+  # Step 7: Initialise the guessing game
+  - name: Create Game Session
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: send_message
+    method: create_game
     args:
-      sender: "node1"
-      role: "user"
-      content: "Hello from node 1 👋"
+      admin: "admin"
+      player_one: "player-one"
+      player_two: "player-two"
     outputs:
-      node1_message: result # Export 'result' as 'node1_message'
+      game_setup: result
 
-  # Step 8: Give time for the message to propagate
-  - name: Wait After Node 1 Message
+  # Step 8: Admin sets the secret word
+  - name: Admin Sets Secret
+    type: call
+    node: calimero-node-1
+    context_id: "{{context_id}}"
+    executor_public_key: "{{member_public_key}}"
+    method: set_secret
+    args:
+      requester: "admin"
+      secret: "merobox"
+    outputs:
+      secret_update: result
+
+  # Step 9: Give time for state propagation
+  - name: Wait After Secret
     type: wait
     seconds: 2
 
-  # Step 9: Node 2 posts a reply
-  - name: Send Message from Node 2
+  # Step 10: Player one asks a question
+  - name: Player One Question
+    type: call
+    node: calimero-node-1
+    context_id: "{{context_id}}"
+    executor_public_key: "{{member_public_key}}"
+    method: submit_question
+    args:
+      player: "player-one"
+      content: "Qual è il segreto custodito dal secondo giocatore?"
+    outputs:
+      player_one_question: result
+
+  # Step 11: Wait before answer
+  - name: Wait Before Answer
+    type: wait
+    seconds: 2
+
+  # Step 12: Player two answers and makes a guess
+  - name: Player Two Answer
     type: call
     node: calimero-node-2
     context_id: "{{context_id}}"
     executor_public_key: "{{public_key}}"
-    method: send_message
+    method: submit_answer
     args:
-      sender: "node2"
-      role: "assistant"
-      content: "Hi node 1, Calimero chat is up and running!"
+      player: "player-two"
+      content: "Sono convinto che la parola segreta sia merobox!"
+      guess: "merobox"
     outputs:
-      node2_message: result # Export 'result' as 'node2_message'
+      player_two_answer: result
 
-  # Step 10: Wait for propagation before reading history
-  - name: Wait Before Fetching History
+  # Step 13: Wait for propagation before inspections
+  - name: Wait Before Fetching State
     type: wait
     seconds: 2
 
-  # Step 11: Fetch chat history from node 1
-  - name: Fetch Chat History
+  # Step 14: Fetch chat history from node 1
+  - name: Fetch Conversation History
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
@@ -115,43 +146,44 @@ steps:
       offset: 0
       limit: 20
     outputs:
-      history_snapshot: result # Export 'result' as 'history_snapshot'
+      history_snapshot: result
 
-  # Step 12: Update max stored messages to a lower cap
-  - name: Update Max Messages
-    type: call
-    node: calimero-node-2
-    context_id: "{{context_id}}"
-    executor_public_key: "{{public_key}}"
-    method: set_max_messages
-    args:
-      max_messages: 100
-    outputs:
-      max_messages_update: result # Export 'result' as 'max_messages_update'
-
-  # Step 13: Inspect contract info
-  - name: Fetch Chat Info
+  # Step 15: Inspect game status
+  - name: Fetch Game Info
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
-    method: info
+    method: game_info
     args: {}
     outputs:
-      chat_info: result # Export 'result' as 'chat_info'
+      game_info_snapshot: result
 
-  # Step 14: Clear the history to reset the chat
+  # Step 16: Player two retrieves the secret
+  - name: Player Two Reveal Secret
+    type: call
+    node: calimero-node-2
+    context_id: "{{context_id}}"
+    executor_public_key: "{{public_key}}"
+    method: get_secret
+    args:
+      requester: "player-two"
+    outputs:
+      revealed_secret: result
+
+  # Step 17: Clear the history to reset the chat
   - name: Clear Chat History
     type: call
     node: calimero-node-1
     context_id: "{{context_id}}"
     executor_public_key: "{{member_public_key}}"
     method: clear_history
-    args: {}
+    args:
+      requester: "admin"
     outputs:
-      cleared: result # Export 'result' as 'cleared'
+      cleared: result
 
-  # Step 15: Confirm history is empty
+  # Step 18: Confirm history is empty
   - name: Fetch History After Clear
     type: call
     node: calimero-node-1
