@@ -31,8 +31,9 @@ import * as webllm from '@mlc-ai/web-llm';
 import translations from '../../constants/en.global.json';
 import { AbiClient, createChatClient } from '../../features/kv/api';
 import type {
+  AnswerResult,
   ChatMessage as StoredMessage,
-  ChatInfo,
+  GameInfo,
 } from '../../api/AbiClient';
 
 type ConversationRole = 'system' | 'user' | 'assistant';
@@ -71,10 +72,10 @@ export default function HomePage(): JSX.Element {
   const { isAuthenticated, logout, app, appUrl } = useCalimero();
   const { show } = useToast();
 
-  const [displayName, setDisplayName] = useState<string>('you');
+  const [displayName, setDisplayName] = useState<string>('admin');
   const [input, setInput] = useState<string>('');
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [info, setInfo] = useState<ChatInfo | null>(null);
+  const [gameInfo, setGameInfo] = useState<GameInfo | null>(null);
   const [apiClient, setApiClient] = useState<AbiClient | null>(null);
   const [engine, setEngine] =
     useState<webllm.WebWorkerMLCEngine | null>(null);
@@ -88,6 +89,18 @@ export default function HomePage(): JSX.Element {
   const [contextIds, setContextIds] = useState<string[]>([]);
   const [isEventPanelCollapsed, setIsEventPanelCollapsed] =
     useState<boolean>(false);
+  const [setupAdminName, setSetupAdminName] = useState<string>('admin');
+  const [setupPlayerOne, setSetupPlayerOne] =
+    useState<string>('player-one');
+  const [setupPlayerTwo, setSetupPlayerTwo] =
+    useState<string>('player-two');
+  const [secretInput, setSecretInput] = useState<string>('');
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [latestGuessWasCorrect, setLatestGuessWasCorrect] =
+    useState<boolean | null>(null);
+  const [llmPrompt, setLlmPrompt] = useState<string>(
+    'Never reveal the secret word. Answer player questions with “yes” or “no” when appropriate, followed by a brief, encouraging hint that nudges them closer to the correct answer.',
+  );
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const messagesRef = useRef<ConversationMessage[]>([]);
@@ -203,12 +216,12 @@ export default function HomePage(): JSX.Element {
     if (!apiClient) return;
     setIsLoadingHistory(true);
     try {
-      const [history, metadata] = await Promise.all([
+      const [history, infoSnapshot] = await Promise.all([
         apiClient.messages({ offset: 0, limit: MAX_HISTORY }),
-        apiClient.info(),
+        apiClient.gameInfo(),
       ]);
       setMessages(normaliseStoredMessages(history));
-      setInfo(metadata);
+      setGameInfo(infoSnapshot);
       setTimeout(scrollToBottom, 100);
     } catch (error) {
       console.error('Failed to load messages', error);
@@ -220,6 +233,16 @@ export default function HomePage(): JSX.Element {
       setIsLoadingHistory(false);
     }
   }, [apiClient, normaliseStoredMessages, scrollToBottom, show]);
+
+  const refreshGameInfoOnly = useCallback(async () => {
+    if (!apiClient) return;
+    try {
+      const snapshot = await apiClient.gameInfo();
+      setGameInfo(snapshot);
+    } catch (error) {
+      console.error('Failed to refresh game info', error);
+    }
+  }, [apiClient]);
 
   useEffect(() => {
     if (apiClient) {
@@ -313,11 +336,24 @@ export default function HomePage(): JSX.Element {
   }, [messages, scrollToBottom]);
 
   const buildLlmContext = useCallback(
-    (history: ConversationMessage[]): webllm.ChatCompletionMessageParam[] => {
-      return history.map((message) => ({
-        role: message.role,
-        content: message.content,
-      }));
+    (
+      history: ConversationMessage[],
+      systemMessage?: string,
+    ): webllm.ChatCompletionMessageParam[] => {
+      const context: webllm.ChatCompletionMessageParam[] = [];
+      if (systemMessage && systemMessage.trim().length > 0) {
+        context.push({
+          role: 'system',
+          content: systemMessage,
+        });
+      }
+      for (const message of history) {
+        context.push({
+          role: message.role,
+          content: message.content,
+        });
+      }
+      return context;
     },
     [],
   );
@@ -333,25 +369,53 @@ export default function HomePage(): JSX.Element {
     [],
   );
 
-  const persistMessage = useCallback(
-    async (
-      payload: Omit<ConversationMessage, 'id'>,
-    ): Promise<ConversationMessage | null> => {
+  const submitQuestion = useCallback(
+    async (playerName: string, content: string) => {
       if (!apiClient) return null;
       try {
-        const stored = await apiClient.sendMessage({
-          sender: payload.sender,
-          role: payload.role,
-          content: payload.content,
+        const stored = await apiClient.submitQuestion({
+          player: playerName,
+          content,
         });
         return normaliseStoredMessage(stored);
       } catch (error) {
-        console.error('Failed to persist message', error);
+        console.error('Failed to submit question', error);
         show({
-          title: 'Failed to persist message to Calimero',
+          title: 'Unable to submit question',
           variant: 'error',
         });
         return null;
+      }
+    },
+    [apiClient, normaliseStoredMessage, show],
+  );
+
+  const submitAnswer = useCallback(
+    async (
+      playerName: string,
+      content: string,
+      guess: string | null,
+    ): Promise<{ message: ConversationMessage | null; guessWasCorrect: boolean }> => {
+      if (!apiClient) {
+        return { message: null, guessWasCorrect: false };
+      }
+      try {
+        const response: AnswerResult = await apiClient.submitAnswer({
+          player: playerName,
+          content,
+          guess,
+        });
+        return {
+          message: normaliseStoredMessage(response.message),
+          guessWasCorrect: response.guess_was_correct,
+        };
+      } catch (error) {
+        console.error('Failed to submit answer', error);
+        show({
+          title: 'Unable to submit answer',
+          variant: 'error',
+        });
+        return { message: null, guessWasCorrect: false };
       }
     },
     [apiClient, normaliseStoredMessage, show],
@@ -376,6 +440,10 @@ export default function HomePage(): JSX.Element {
       if (!engine || !engineReady) {
         return;
       }
+      const playerTwoName = gameInfo?.player_two?.trim();
+      if (!playerTwoName) {
+        return;
+      }
       if (respondedMessageIdsRef.current.has(triggerMessage.id)) {
         return;
       }
@@ -383,14 +451,28 @@ export default function HomePage(): JSX.Element {
       respondedMessageIdsRef.current.add(triggerMessage.id);
       setIsGenerating(true);
 
+      let secretForPrompt: string | null = null;
+      if (apiClient) {
+        try {
+          const secretValue = await apiClient.getSecret({
+            requester: playerTwoName,
+          });
+          if (typeof secretValue === 'string' && secretValue.length > 0) {
+            secretForPrompt = secretValue;
+          }
+        } catch (error) {
+          console.error('Failed to fetch secret for LLM prompt', error);
+        }
+      }
+
       const placeholderId = `assistant-pending-${triggerMessage.id}`;
       pendingAssistantRef.current.set(triggerMessage.id, placeholderId);
 
       const placeholder: ConversationMessage = {
         id: placeholderId,
-        role: 'assistant',
+        role: 'player_two',
         content: 'Generating response…',
-        sender: 'assistant',
+        sender: playerTwoName,
         timestamp: Date.now(),
       };
 
@@ -410,7 +492,15 @@ export default function HomePage(): JSX.Element {
         const history = messagesRef.current.filter(
           (message) => message.id !== placeholderId,
         );
-        const llmMessages = buildLlmContext(history);
+        const promptParts = [] as string[];
+        if (llmPrompt.trim().length > 0) {
+          promptParts.push(llmPrompt.trim());
+        }
+        promptParts.push(
+          `Secret word: ${secretForPrompt != null ? secretForPrompt : 'N/A'}`,
+        );
+        const systemPrompt = promptParts.join('\n\n');
+        const llmMessages = buildLlmContext(history, systemPrompt);
         const lastMessage = llmMessages[llmMessages.length - 1];
         if (!lastMessage || lastMessage.role !== 'user') {
           throw new Error('Conversation last turn is not a user message');
@@ -425,20 +515,19 @@ export default function HomePage(): JSX.Element {
           throw new Error('No assistant response returned');
         }
 
-        const assistantMessage: Omit<ConversationMessage, 'id'> = {
-          role: 'assistant',
-          content: assistantText,
-          sender: 'assistant',
-          timestamp: Date.now(),
-        };
+        const { message: persistedAssistant, guessWasCorrect } =
+          await submitAnswer(playerTwoName, assistantText, null);
+        setLatestGuessWasCorrect(guessWasCorrect ? true : null);
+        pendingAssistantRef.current.delete(triggerMessage.id);
 
-        const persistedAssistant = await persistMessage(assistantMessage);
         const conversationAssistant =
           persistedAssistant ?? {
-            ...assistantMessage,
             id: `local-${Date.now()}`,
+            role: 'player_two',
+            content: assistantText,
+            sender: playerTwoName,
+            timestamp: Date.now(),
           };
-        pendingAssistantRef.current.delete(triggerMessage.id);
 
         const withoutPlaceholder = removeMessageById(
           messagesRef.current,
@@ -482,12 +571,15 @@ export default function HomePage(): JSX.Element {
       }
     },
     [
+      apiClient,
       appendStreamEvent,
       buildLlmContext,
       engine,
       engineReady,
-      persistMessage,
+      gameInfo,
+      llmPrompt,
       show,
+      submitAnswer,
     ],
   );
 
@@ -589,13 +681,14 @@ export default function HomePage(): JSX.Element {
       const eventName =
         (asRecord?.type as string | undefined) ?? 'contract-event';
       appendStreamEvent(eventName, event, event);
+      void refreshGameInfoOnly();
 
       const eventMessages = extractMessageMetadata(event);
       if (eventMessages.length > 0) {
         void processEventMetadata(eventMessages);
       }
     },
-    [appendStreamEvent, extractMessageMetadata, processEventMetadata],
+    [appendStreamEvent, extractMessageMetadata, processEventMetadata, refreshGameInfoOnly],
   );
 
   const handleGenerateFromEvent = useCallback(
@@ -603,7 +696,7 @@ export default function HomePage(): JSX.Element {
       const source = entry.event ?? entry.parsed ?? entry.raw;
       if (!source) {
         show({
-          title: 'Evento senza payload da processare',
+          title: 'Event payload missing',
           variant: 'warning',
         });
         return;
@@ -638,7 +731,7 @@ export default function HomePage(): JSX.Element {
 
       if (!latestUser) {
         show({
-          title: 'Nessun messaggio utente da processare',
+          title: 'No user message found to process',
           variant: 'warning',
         });
         return;
@@ -775,41 +868,97 @@ export default function HomePage(): JSX.Element {
     };
   }, [eventStreamStatus]);
 
+  const stageName = useMemo(
+    () => extractStageName(gameInfo?.stage),
+    [gameInfo?.stage],
+  );
+
+  const stageKey = useMemo(
+    () => (stageName ? canonicalStageKey(stageName) : null),
+    [stageName],
+  );
+
   const handleSendMessage = useCallback(async () => {
-    const trimmed = input.trim();
-    if (!trimmed || !apiClient) {
+    const trimmedContent = input.trim();
+    const playerName = displayName.trim();
+    if (!trimmedContent || !apiClient || !gameInfo) {
+      return;
+    }
+    if (playerName.length === 0) {
+      show({
+        title: 'No active participant selected yet',
+        variant: 'warning',
+      });
       return;
     }
 
     setInput('');
+    setLatestGuessWasCorrect(null);
 
-    const userMessage: Omit<ConversationMessage, 'id'> = {
-      role: 'user',
-      content: trimmed,
-      sender: displayName.trim() || 'you',
-      timestamp: Date.now(),
-    };
+    let messagePersisted: ConversationMessage | null = null;
 
-    const persistedUser = await persistMessage(userMessage);
-    const conversationMessage =
-      persistedUser ?? { ...userMessage, id: `local-${Date.now()}` };
+    if (stageKey === 'waitingforquestion') {
+      if (gameInfo.player_one && playerName !== gameInfo.player_one) {
+        show({
+          title: 'It is not your turn',
+          variant: 'warning',
+        });
+        return;
+      }
 
-    const nextMessages = upsertMessage(
-      messagesRef.current,
-      conversationMessage,
-    );
-    messagesRef.current = nextMessages;
-    setMessages(nextMessages);
-  }, [apiClient, displayName, input, persistMessage]);
+      messagePersisted = await submitQuestion(playerName, trimmedContent);
+    } else if (stageKey === 'waitingforanswer') {
+      show({
+        title: 'Player two replies via the LLM trigger',
+        variant: 'warning',
+      });
+      return;
+    } else {
+      show({
+        title: 'The game is not ready for messages yet',
+        variant: 'warning',
+      });
+      return;
+    }
+
+    if (messagePersisted) {
+      const nextMessages = upsertMessage(
+        messagesRef.current,
+        messagePersisted,
+      );
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+    }
+
+    await refreshGameInfoOnly();
+  }, [
+    apiClient,
+    displayName,
+    gameInfo,
+    input,
+    stageKey,
+    refreshGameInfoOnly,
+    show,
+    submitQuestion,
+  ]);
 
   const handleClearChat = useCallback(async () => {
     if (!apiClient) return;
+    const requester = displayName.trim();
+    if (!requester) {
+      show({
+        title: 'Only the admin can clear the history',
+        variant: 'warning',
+      });
+      return;
+    }
     try {
-      await apiClient.clearHistory();
+      await apiClient.clearHistory({ requester });
       setMessages([]);
       messagesRef.current = [];
       respondedMessageIdsRef.current.clear();
       pendingAssistantRef.current.clear();
+      await refreshGameInfoOnly();
       show({
         title: 'Chat history cleared',
         variant: 'success',
@@ -818,6 +967,136 @@ export default function HomePage(): JSX.Element {
       console.error('Failed to clear history', error);
       show({
         title: 'Unable to clear history',
+        variant: 'error',
+      });
+    }
+  }, [apiClient, displayName, refreshGameInfoOnly, show]);
+
+  const handleCreateGame = useCallback(async () => {
+    if (!apiClient) return;
+    const admin = setupAdminName.trim();
+    const playerOne = setupPlayerOne.trim();
+    const playerTwo = setupPlayerTwo.trim();
+    if (!admin || !playerOne || !playerTwo) {
+      show({
+        title: 'Fill in all fields to create the game',
+        variant: 'warning',
+      });
+      return;
+    }
+
+    try {
+      const infoSnapshot = await apiClient.createGame({
+        admin,
+        player_one: playerOne,
+        player_two: playerTwo,
+      });
+      setGameInfo(infoSnapshot);
+      setMessages([]);
+      messagesRef.current = [];
+      respondedMessageIdsRef.current.clear();
+      pendingAssistantRef.current.clear();
+      setRevealedSecret(null);
+      setLatestGuessWasCorrect(null);
+      show({
+        title: 'New game created',
+        variant: 'success',
+      });
+    } catch (error) {
+      console.error('Failed to create game', error);
+      show({
+        title: 'Unable to create the game',
+        variant: 'error',
+      });
+    }
+  }, [
+    apiClient,
+    setupAdminName,
+    setupPlayerOne,
+    setupPlayerTwo,
+    show,
+  ]);
+
+  const handleSetSecret = useCallback(async () => {
+    if (!apiClient) return;
+    const requester = displayName.trim();
+    const secretValue = secretInput.trim();
+    if (!requester || !secretValue) {
+      show({
+        title: 'Provide the admin name and a valid secret',
+        variant: 'warning',
+      });
+      return;
+    }
+
+    try {
+      const infoSnapshot = await apiClient.setSecret({
+        requester,
+        secret: secretValue,
+      });
+      setSecretInput('');
+      setGameInfo(infoSnapshot);
+      show({
+        title: 'Secret updated',
+        variant: 'success',
+      });
+    } catch (error) {
+      console.error('Failed to set secret', error);
+      show({
+        title: 'Unable to set the secret',
+        variant: 'error',
+      });
+    }
+  }, [apiClient, displayName, secretInput, show]);
+
+  const handleRevealSecret = useCallback(async () => {
+    if (!apiClient) return;
+    const requester = displayName.trim();
+    if (!requester) {
+      show({
+        title: 'Set your name to request the secret',
+        variant: 'warning',
+      });
+      return;
+    }
+
+    try {
+      const secretValue = await apiClient.getSecret({ requester });
+      if (secretValue) {
+        setRevealedSecret(secretValue);
+        show({
+          title: 'Secret retrieved',
+          variant: 'success',
+        });
+      } else {
+        setRevealedSecret(null);
+        show({
+          title: 'No access to the secret',
+          variant: 'warning',
+        });
+      }
+    } catch (error) {
+      console.error('Failed to fetch secret', error);
+      show({
+        title: 'Failed to retrieve the secret',
+        variant: 'error',
+      });
+    }
+  }, [apiClient, displayName, show]);
+
+  const handleDebugRevealSecret = useCallback(async () => {
+    if (!apiClient) return;
+    try {
+      const secretValue = await apiClient.debugRevealSecret();
+      setRevealedSecret(secretValue ?? null);
+      show({
+        title: 'Secret (debug) retrieved',
+        variant: 'success',
+      });
+    } catch (error) {
+      console.error('Failed to debug reveal secret', error);
+      show({
+        title: 'Failed to reveal secret in debug mode',
         variant: 'error',
       });
     }
@@ -846,6 +1125,86 @@ export default function HomePage(): JSX.Element {
       </div>
     );
   }, [appUrl]);
+
+  const stageLabel = useMemo(() => {
+    switch (stageKey) {
+      case 'waitingforsecret':
+        return 'Waiting for secret';
+      case 'waitingforquestion':
+        return 'Player 1 turn';
+      case 'waitingforanswer':
+        return 'Player 2 turn';
+      case 'completed':
+        return 'Game completed';
+      case 'notstarted':
+      default:
+        return 'Needs configuration';
+    }
+  }, [stageKey]);
+
+  const awaitingPlayerLabel = useMemo(() => {
+    if (!gameInfo?.awaiting_player) {
+      return '—';
+    }
+    return gameInfo.awaiting_player;
+  }, [gameInfo?.awaiting_player]);
+
+  const currentRoleLabel = useMemo(() => {
+    const trimmed = displayName.trim();
+    if (!trimmed) {
+      return 'Unset';
+    }
+    if (gameInfo?.admin && trimmed === gameInfo.admin) {
+      return 'Admin';
+    }
+    if (gameInfo?.player_one && trimmed === gameInfo.player_one) {
+      return 'Player 1';
+    }
+    if (gameInfo?.player_two && trimmed === gameInfo.player_two) {
+      return 'Player 2';
+    }
+    return 'Observer';
+  }, [displayName, gameInfo]);
+
+  const secretStatusLabel = useMemo(() => {
+    if (!gameInfo) {
+      return '—';
+    }
+    return gameInfo.secret_set ? 'Secret ready' : 'Secret missing';
+  }, [gameInfo]);
+
+  const namesLocked = useMemo(
+    () => Boolean(gameInfo?.admin && stageKey && stageKey !== 'notstarted'),
+    [gameInfo?.admin, stageKey],
+  );
+
+  useEffect(() => {
+    if (!gameInfo) {
+      return;
+    }
+    let expectedName: string | null = null;
+    switch (stageKey) {
+      case 'waitingforsecret':
+      case 'notstarted':
+        expectedName = gameInfo.admin ?? null;
+        break;
+      case 'waitingforquestion':
+        expectedName = gameInfo.player_one ?? null;
+        break;
+      case 'waitingforanswer':
+        expectedName = gameInfo.player_two ?? null;
+        break;
+      case 'completed':
+        expectedName =
+          gameInfo.player_two ?? gameInfo.player_one ?? gameInfo.admin ?? null;
+        break;
+      default:
+        break;
+    }
+    if (expectedName && expectedName.length > 0 && displayName !== expectedName) {
+      setDisplayName(expectedName);
+    }
+  }, [displayName, gameInfo, stageKey]);
 
   return (
     <>
@@ -907,19 +1266,49 @@ export default function HomePage(): JSX.Element {
                       flexWrap: 'wrap',
                     }}
                   >
-                    <div style={{ flex: '1 1 220px' }}>
+                    <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                       <Text size="sm" color="muted">
-                        Display name
+                        Active participant
                       </Text>
-                      <Input
-                        value={displayName}
-                        onChange={(event) =>
-                          setDisplayName(event.target.value)
-                        }
-                        placeholder="Your name"
-                      />
+                      <Text
+                        size="lg"
+                        style={{ fontWeight: 600, color: '#e5e7eb' }}
+                      >
+                        {displayName || '—'}
+                      </Text>
+                      <Text size="xs" color="muted">
+                        Automatically follows the game turn order.
+                      </Text>
                     </div>
-                    <div style={{ flex: '1 1 220px' }}>
+                    <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      <Text size="sm" color="muted">
+                        Current role
+                      </Text>
+                      <Text
+                        size="lg"
+                        style={{ fontWeight: 600, color: '#e5e7eb' }}
+                      >
+                        {currentRoleLabel}
+                      </Text>
+                      <Text size="xs" color="muted">
+                        Current turn: {awaitingPlayerLabel}
+                      </Text>
+                    </div>
+                    <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                      <Text size="sm" color="muted">
+                        Game stage
+                      </Text>
+                      <Text
+                        size="lg"
+                        style={{ fontWeight: 600, color: '#e5e7eb' }}
+                      >
+                        {stageLabel}
+                      </Text>
+                      <Text size="xs" color="muted">
+                        {secretStatusLabel}
+                      </Text>
+                    </div>
+                    <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                       <Text size="sm" color="muted">
                         Stored messages
                       </Text>
@@ -927,20 +1316,12 @@ export default function HomePage(): JSX.Element {
                         size="lg"
                         style={{ fontWeight: 600, color: '#e5e7eb' }}
                       >
-                        {info
-                          ? `${info.total_messages}/${info.max_messages}`
+                        {gameInfo
+                          ? `${gameInfo.total_messages}/${gameInfo.max_messages}`
                           : '—'}
                       </Text>
-                    </div>
-                    <div style={{ flex: '1 1 220px' }}>
-                      <Text size="sm" color="muted">
-                        Engine
-                      </Text>
-                      <Text
-                        size="lg"
-                        style={{ fontWeight: 600, color: '#e5e7eb' }}
-                      >
-                        {MODEL_NAME}
+                      <Text size="xs" color="muted">
+                        Engine: {MODEL_NAME}
                       </Text>
                     </div>
                   </div>
@@ -958,9 +1339,170 @@ export default function HomePage(): JSX.Element {
                     >
                       {isLoadingHistory ? 'Refreshing…' : 'Refresh history'}
                     </Button>
+                    <Button variant="ghost" onClick={refreshGameInfoOnly}>
+                      Refresh status
+                    </Button>
                     <Button variant="error" onClick={handleClearChat}>
                       Clear history
                     </Button>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.5rem',
+                      padding: '0.75rem',
+                      background: 'rgba(15, 23, 42, 0.45)',
+                      borderRadius: '10px',
+                      border: '1px solid rgba(148, 163, 184, 0.18)',
+                    }}
+                  >
+                    <Text size="sm" color="muted">
+                      Game setup
+                    </Text>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '0.75rem',
+                      }}
+                    >
+                      <Input
+                        value={setupAdminName}
+                        onChange={(event) =>
+                          setSetupAdminName(event.target.value)
+                        }
+                        placeholder="Admin name"
+                        style={{ flex: '1 1 200px' }}
+                        disabled={namesLocked}
+                      />
+                      <Input
+                        value={setupPlayerOne}
+                        onChange={(event) =>
+                          setSetupPlayerOne(event.target.value)
+                        }
+                        placeholder="Player 1 name"
+                        style={{ flex: '1 1 200px' }}
+                        disabled={namesLocked}
+                      />
+                      <Input
+                        value={setupPlayerTwo}
+                        onChange={(event) =>
+                          setSetupPlayerTwo(event.target.value)
+                        }
+                        placeholder="Player 2 name"
+                        style={{ flex: '1 1 200px' }}
+                        disabled={namesLocked}
+                      />
+                    </div>
+                    {namesLocked && (
+                      <Text size="xs" color="muted">
+                        Names are locked while the current game is active.
+                      </Text>
+                    )}
+                    <Button variant="primary" onClick={handleCreateGame}>
+                      Create or reset game
+                    </Button>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.5rem',
+                      padding: '0.75rem',
+                      background: 'rgba(15, 23, 42, 0.45)',
+                      borderRadius: '10px',
+                      border: '1px solid rgba(148, 163, 184, 0.18)',
+                    }}
+                  >
+                    <Text size="sm" color="muted">
+                      Secret management
+                    </Text>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '0.75rem',
+                      }}
+                    >
+                      <Input
+                        value={secretInput}
+                        onChange={(event) =>
+                          setSecretInput(event.target.value)
+                        }
+                        placeholder="Secret word (single word)"
+                        style={{ flex: '1 1 240px' }}
+                      />
+                      <Button
+                        variant="secondary"
+                        onClick={handleSetSecret}
+                      >
+                        Set secret
+                      </Button>
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '0.75rem',
+                      }}
+                    >
+                      <Button variant="ghost" onClick={handleRevealSecret}>
+                        Reveal secret (authorized roles)
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={handleDebugRevealSecret}
+                      >
+                        Debug reveal
+                      </Button>
+                    </div>
+                    {revealedSecret !== null && (
+                      <Text size="xs" color="muted">
+                        Known secret: {' '}
+                        <span style={{ color: '#fbbf24' }}>{revealedSecret}</span>
+                      </Text>
+                    )}
+                    {latestGuessWasCorrect !== null && (
+                      <Text
+                        size="xs"
+                        style={{
+                          color: latestGuessWasCorrect ? '#34d399' : '#f87171',
+                        }}
+                      >
+                        Latest guess:{' '}
+                        {latestGuessWasCorrect ? 'correct 🎉' : 'incorrect'}
+                      </Text>
+                    )}
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.35rem',
+                      }}
+                    >
+                      <Text size="sm" color="muted">
+                        Custom assistant prompt
+                      </Text>
+                      <textarea
+                        value={llmPrompt}
+                        onChange={(event) => setLlmPrompt(event.target.value)}
+                        rows={3}
+                        style={{
+                          width: '100%',
+                          background: 'rgba(15, 23, 42, 0.6)',
+                          color: '#e5e7eb',
+                          border: '1px solid rgba(148, 163, 184, 0.2)',
+                          borderRadius: '8px',
+                          padding: '0.6rem',
+                          fontSize: '0.9rem',
+                          resize: 'vertical',
+                        }}
+                      />
+                      <Text size="xs" color="muted">
+                        The secret is automatically appended to the prompt before generation.
+                      </Text>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -1031,10 +1573,10 @@ export default function HomePage(): JSX.Element {
                             'Connection error (retrying)'}
                         </Text>
                         <Text size="xs" color="muted">
-                          Contesti sottoscritti:{' '}
+                          Subscribed contexts:{' '}
                           {contextIds.length > 0
                             ? contextIds.join(', ')
-                            : 'nessuno'}
+                            : 'none'}
                         </Text>
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -1057,7 +1599,7 @@ export default function HomePage(): JSX.Element {
                       </div>
                     </div>
                     <Text size="xs" color="muted">
-                      Eventi ricevuti via websocket dal nodo {connectionTarget}.
+                      Events received via websocket from node {connectionTarget}.
                     </Text>
                   </div>
                   <div
@@ -1075,7 +1617,7 @@ export default function HomePage(): JSX.Element {
                   >
                     {eventLog.length === 0 ? (
                       <Text size="sm" color="muted">
-                        Nessun evento ricevuto finora.
+                        No events received yet.
                       </Text>
                     ) : (
                       eventLog.map((entry) => {
@@ -1104,7 +1646,6 @@ export default function HomePage(): JSX.Element {
               <Card
                 variant="rounded"
                 style={{
-                  height: '60vh',
                   display: 'flex',
                   flexDirection: 'column',
                 }}
@@ -1114,24 +1655,33 @@ export default function HomePage(): JSX.Element {
                 </CardHeader>
                 <CardContent
                   style={{
-                    flex: 1,
-                    overflowY: 'auto',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '1rem',
                     paddingRight: '0.5rem',
+                    minHeight: 0,
                   }}
                 >
-                  {messages.length === 0 ? (
-                    <Text size="sm" color="muted">
-                      Start the conversation by sending a message.
-                    </Text>
-                  ) : (
-                    messages.map((message) => (
-                      <MessageBubble key={message.id} message={message} />
-                    ))
-                  )}
-                  <div ref={messagesEndRef} />
+                  <div
+                    style={{
+                      maxHeight: '60vh',
+                      overflowY: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '1rem',
+                    }}
+                  >
+                    {messages.length === 0 ? (
+                      <Text size="sm" color="muted">
+                        Start the game by sending a question.
+                      </Text>
+                    ) : (
+                      messages.map((message) => (
+                        <MessageBubble key={message.id} message={message} />
+                      ))
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
                 </CardContent>
               </Card>
 
@@ -1150,7 +1700,8 @@ export default function HomePage(): JSX.Element {
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
                     rows={4}
-                    placeholder="Ask the assistant anything…"
+                    placeholder="Write your message...
+Only the current player can act"
                     style={{
                       width: '100%',
                       background: 'rgba(15, 23, 42, 0.6)',
@@ -1160,8 +1711,14 @@ export default function HomePage(): JSX.Element {
                       padding: '0.75rem',
                       fontSize: '0.95rem',
                       resize: 'vertical',
+                      whiteSpace: 'pre-line',
                     }}
                   />
+                  {stageKey === 'waitingforanswer' && (
+                    <Text size="xs" color="muted">
+                      Player two answers using “Trigger LLM” only.
+                    </Text>
+                  )}
                   <div
                     style={{
                       display: 'flex',
@@ -1173,9 +1730,9 @@ export default function HomePage(): JSX.Element {
                       variant="primary"
                       onClick={handleSendMessage}
                       disabled={
-                        !engineReady ||
                         isGenerating ||
-                        input.trim().length === 0
+                        input.trim().length === 0 ||
+                        stageKey === 'waitingforanswer'
                       }
                     >
                       {isGenerating ? 'Generating…' : 'Send'}
@@ -1256,10 +1813,40 @@ function extractAssistantContent(
 
 function sanitiseRole(role: string): ConversationRole {
   const normalised = role.trim().toLowerCase();
+  if (normalised === 'player_two') {
+    return 'assistant';
+  }
+  if (normalised === 'player_one') {
+    return 'user';
+  }
   if (normalised === 'assistant' || normalised === 'system') {
     return normalised;
   }
   return 'user';
+}
+
+function extractStageName(stage: unknown): string | null {
+  if (!stage) {
+    return null;
+  }
+  if (typeof stage === 'string') {
+    return stage;
+  }
+  if (typeof stage === 'object') {
+    const record = stage as Record<string, unknown>;
+    if ('name' in record && typeof record.name === 'string') {
+      return record.name;
+    }
+    const keys = Object.keys(record);
+    if (keys.length > 0 && typeof keys[0] === 'string') {
+      return keys[0];
+    }
+  }
+  return null;
+}
+
+function canonicalStageKey(stageName: string): string {
+  return stageName.replace(/[_\s]+/g, '').toLowerCase();
 }
 
 function upsertMessage(

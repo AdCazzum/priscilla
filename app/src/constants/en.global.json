@@ -1,6 +1,6 @@
 {
   "home": {
-    "welcome": "Welcome to Scripsiclla Number Duel!",
+    "welcome": "Welcome to Priscilla A Calimero implementation of a distribuite WASM LLM Network",
     "demoDescription": "Lock in your secret number, reveal your opponent’s, and claim victory with the highest pick. Calimero keeps both players in sync while enforcing every turn.",
     "calimeroIntro": "Calimero ensures private, synchronized state between participant nodes, so the duel remains fair and verifiable.",
     "learnMore": "Learn more about Calimero:",
@@ -37,15 +37,16 @@
     }
   },
   "auth": {
-    "title": "Scripsiclla Number Duel",
+    "title": "Priscilla - A Calimero implementation of a distribuite WASM LLM Network",
     "back": "Back",
     "goToContext": "Go to game dashboard",
     "description": {
-      "title": "Welcome to Scripsiclla Number Duel",
-      "subtitle": "A Calimero-powered duel of hidden numbers",
+      "title": "Priscilla - A Calimero implementation of a distribuite WASM LLM Network",
+      "subtitle": "A Calimero implementation of a distribuite WASM LLM Network",
       "features": [
-        "Privately register each player’s secret number",
-        "Take alternating turns to reveal the rival’s pick",
+        "Interact with a decentralized LLM network using Calimero protocol",
+        "Securely lock in your secret password",
+        "Try to guess the password of your opponent thats an LLM",
         "Automatic win validation and synchronized state across nodes"
       ],
       "getStarted": "Connect to your Calimero node to begin"

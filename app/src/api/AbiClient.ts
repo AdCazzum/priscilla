@@ -7,9 +7,9 @@ import {
 
 // Generated types
 
-export interface ChatInfo {
-  total_messages: number;
-  max_messages: number;
+export interface AnswerResult {
+  message: ChatMessage;
+  guess_was_correct: boolean;
 }
 
 export interface ChatMessage {
@@ -20,13 +20,49 @@ export interface ChatMessage {
   timestamp_ms: number;
 }
 
+export interface GameInfo {
+  admin: string | null;
+  player_one: string | null;
+  player_two: string | null;
+  stage: GameStage;
+  secret_set: boolean;
+  total_messages: number;
+  max_messages: number;
+  awaiting_player: string | null;
+}
+
+export type GameStagePayload =
+  | { name: 'NotStarted' }
+  | { name: 'WaitingForSecret' }
+  | { name: 'WaitingForQuestion' }
+  | { name: 'WaitingForAnswer' }
+  | { name: 'Completed' }
+
+export const GameStage = {
+  NotStarted: (): GameStagePayload => ({ name: 'NotStarted' }),
+  WaitingForSecret: (): GameStagePayload => ({ name: 'WaitingForSecret' }),
+  WaitingForQuestion: (): GameStagePayload => ({ name: 'WaitingForQuestion' }),
+  WaitingForAnswer: (): GameStagePayload => ({ name: 'WaitingForAnswer' }),
+  Completed: (): GameStagePayload => ({ name: 'Completed' }),
+} as const;
+
+export interface GuessResult {
+  guess_was_correct: boolean;
+}
+
+
+
+
 
 
 
 export type AbiEvent =
   | { name: "MessageAdded" }
   | { name: "HistoryCleared" }
-  | { name: "MaxMessagesUpdated" }
+  | { name: "GameCreated" }
+  | { name: "SecretSet" }
+  | { name: "SecretGuessed" }
+  | { name: "StageChanged" }
 ;
 
 
@@ -148,12 +184,48 @@ export class AbiClient {
   }
 
   /**
-   * send_message
+   * create_game
    */
-  public async sendMessage(params: { sender: string; role: string; content: string }): Promise<ChatMessage> {
-    const response = await this.app.execute(this.context, 'send_message', params);
+  public async createGame(params: { admin: string; player_one: string; player_two: string }): Promise<GameInfo> {
+    const response = await this.app.execute(this.context, 'create_game', params);
+    if (response.success) {
+      return response.result as GameInfo;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * set_secret
+   */
+  public async setSecret(params: { requester: string; secret: string }): Promise<GameInfo> {
+    const response = await this.app.execute(this.context, 'set_secret', params);
+    if (response.success) {
+      return response.result as GameInfo;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * submit_question
+   */
+  public async submitQuestion(params: { player: string; content: string }): Promise<ChatMessage> {
+    const response = await this.app.execute(this.context, 'submit_question', params);
     if (response.success) {
       return response.result as ChatMessage;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * submit_answer
+   */
+  public async submitAnswer(params: { player: string; content: string; guess: string | null }): Promise<AnswerResult> {
+    const response = await this.app.execute(this.context, 'submit_answer', params);
+    if (response.success) {
+      return response.result as AnswerResult;
     } else {
       throw new Error(response.error || 'Execution failed');
     }
@@ -186,8 +258,8 @@ export class AbiClient {
   /**
    * clear_history
    */
-  public async clearHistory(): Promise<void> {
-    const response = await this.app.execute(this.context, 'clear_history', {});
+  public async clearHistory(params: { requester: string }): Promise<void> {
+    const response = await this.app.execute(this.context, 'clear_history', params);
     if (response.success) {
       return response.result as void;
     } else {
@@ -198,7 +270,7 @@ export class AbiClient {
   /**
    * set_max_messages
    */
-  public async setMaxMessages(params: { max_messages: number }): Promise<void> {
+  public async setMaxMessages(params: { requester: string; max_messages: number }): Promise<void> {
     const response = await this.app.execute(this.context, 'set_max_messages', params);
     if (response.success) {
       return response.result as void;
@@ -208,12 +280,48 @@ export class AbiClient {
   }
 
   /**
-   * info
+   * game_info
    */
-  public async info(): Promise<ChatInfo> {
-    const response = await this.app.execute(this.context, 'info', {});
+  public async gameInfo(): Promise<GameInfo> {
+    const response = await this.app.execute(this.context, 'game_info', {});
     if (response.success) {
-      return response.result as ChatInfo;
+      return response.result as GameInfo;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * check_guess
+   */
+  public async checkGuess(params: { guess: string }): Promise<GuessResult> {
+    const response = await this.app.execute(this.context, 'check_guess', params);
+    if (response.success) {
+      return response.result as GuessResult;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * get_secret
+   */
+  public async getSecret(params: { requester: string }): Promise<string> {
+    const response = await this.app.execute(this.context, 'get_secret', params);
+    if (response.success) {
+      return response.result as string;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
+   * debug_reveal_secret
+   */
+  public async debugRevealSecret(): Promise<string> {
+    const response = await this.app.execute(this.context, 'debug_reveal_secret', {});
+    if (response.success) {
+      return response.result as string;
     } else {
       throw new Error(response.error || 'Execution failed');
     }
