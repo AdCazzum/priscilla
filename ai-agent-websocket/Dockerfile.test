@@ -1,0 +1,26 @@
+FROM node:23-bullseye-slim
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package.json pnpm-lock.yaml ./
+RUN npm install -g pnpm@9.15.1
+RUN pnpm install --shamefully-hoist
+
+# Copy source and build
+COPY tsconfig.json ./
+COPY src ./src
+COPY .env.template ./.env
+RUN pnpm build
+
+# Create directories
+RUN mkdir -p /app/characters /iexec_in /iexec_out
+
+# Copy entrypoint
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENV DAEMON_PROCESS=true
+
+# For testing without Ollama in container, we'll skip the full entrypoint
+CMD ["node", "dist/index.js", "--character=/app/characters/character.json"]

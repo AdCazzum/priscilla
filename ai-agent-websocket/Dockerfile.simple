@@ -1,0 +1,30 @@
+FROM node:23.3.0-slim
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y curl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Ollama
+RUN curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz && \
+    tar -C /usr -xzf ollama-linux-amd64.tgz && \
+    rm ollama-linux-amd64.tgz
+
+WORKDIR /app
+
+# Copy everything including node_modules (already installed locally)
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/characters /iexec_in /iexec_out
+
+# Set environment
+ENV DAEMON_PROCESS=true
+ENV NODE_ENV=production
+
+# Copy entrypoint
+COPY ./entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/bin/bash", "entrypoint.sh"]
