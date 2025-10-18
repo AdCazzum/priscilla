@@ -93,6 +93,9 @@ export default function HomePage(): JSX.Element {
   const messagesRef = useRef<ConversationMessage[]>([]);
   const respondedMessageIdsRef = useRef<Set<string>>(new Set());
   const pendingAssistantRef = useRef<Map<string, string>>(new Map());
+  const subscriptionContextIdsRef = useRef<string[] | null>(null);
+  const subscriptionKeyRef = useRef<string | null>(null);
+  const hasSeenEventRef = useRef<boolean>(false);
 
   const connectionTarget = useMemo(() => {
     if (!appUrl) {
@@ -100,6 +103,13 @@ export default function HomePage(): JSX.Element {
     }
     return appUrl;
   }, [appUrl]);
+
+  const contextsKey = useMemo(() => {
+    if (contextIds.length === 0) {
+      return null;
+    }
+    return [...contextIds].sort().join('|');
+  }, [contextIds]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -263,7 +273,12 @@ export default function HomePage(): JSX.Element {
     if (!app) return;
     try {
       setEventStreamStatus('connecting');
+      console.log('[Events] Fetching contexts for subscription…');
       const contexts = await app.fetchContexts();
+      console.log(
+        '[Events] Contexts resolved:',
+        contexts.map((context) => context.contextId),
+      );
       setContextIds(contexts.map((context) => context.contextId));
     } catch (error) {
       console.error('Failed to fetch contexts for event subscription', error);
@@ -562,6 +577,27 @@ export default function HomePage(): JSX.Element {
     [processMessageMetadata],
   );
 
+  const handleContractEvent = useCallback(
+    (event: unknown) => {
+      hasSeenEventRef.current = true;
+      console.log('[Events] Received node event:', event);
+      setEventStreamStatus('connected');
+      const asRecord =
+        event && typeof event === 'object'
+          ? (event as Record<string, unknown>)
+          : null;
+      const eventName =
+        (asRecord?.type as string | undefined) ?? 'contract-event';
+      appendStreamEvent(eventName, event, event);
+
+      const eventMessages = extractMessageMetadata(event);
+      if (eventMessages.length > 0) {
+        void processEventMetadata(eventMessages);
+      }
+    },
+    [appendStreamEvent, extractMessageMetadata, processEventMetadata],
+  );
+
   const handleGenerateFromEvent = useCallback(
     async (entry: StreamEventEntry) => {
       const source = entry.event ?? entry.parsed ?? entry.raw;
@@ -619,44 +655,125 @@ export default function HomePage(): JSX.Element {
   );
 
   useEffect(() => {
-    if (!app || !isAuthenticated || contextIds.length === 0) {
+    if (!app || !isAuthenticated) {
+      if (subscriptionContextIdsRef.current) {
+        console.log(
+          '[Events] Clearing subscriptions due to auth change:',
+          subscriptionContextIdsRef.current,
+        );
+        app.unsubscribeFromEvents(subscriptionContextIdsRef.current);
+        subscriptionContextIdsRef.current = null;
+        subscriptionKeyRef.current = null;
+      }
+      hasSeenEventRef.current = false;
       setEventStreamStatus('idle');
       return;
     }
 
-    setEventStreamStatus('connecting');
-
-    const handler = (event: unknown) => {
-      setEventStreamStatus('connected');
-      const asRecord =
-        event && typeof event === 'object'
-          ? (event as Record<string, unknown>)
-          : null;
-      const eventName =
-        (asRecord?.type as string | undefined) ?? 'contract-event';
-      appendStreamEvent(eventName, event, event);
-
-      const eventMessages = extractMessageMetadata(event);
-      if (eventMessages.length > 0) {
-        void processEventMetadata(eventMessages);
+    if (contextIds.length === 0) {
+      if (subscriptionContextIdsRef.current) {
+        console.log(
+          '[Events] No contexts available, unsubscribing:',
+          subscriptionContextIdsRef.current,
+        );
+        app.unsubscribeFromEvents(subscriptionContextIdsRef.current);
+        subscriptionContextIdsRef.current = null;
+        subscriptionKeyRef.current = null;
       }
-    };
+      hasSeenEventRef.current = false;
+      setEventStreamStatus('idle');
+      return;
+    }
 
-    app.subscribeToEvents(contextIds, handler);
+    if (!contextsKey) {
+      return;
+    }
+
+    if (subscriptionKeyRef.current === contextsKey) {
+      return;
+    }
+
+    if (subscriptionContextIdsRef.current) {
+      console.log(
+        '[Events] Switching contexts, unsubscribing:',
+        subscriptionContextIdsRef.current,
+      );
+      app.unsubscribeFromEvents(subscriptionContextIdsRef.current);
+      subscriptionContextIdsRef.current = null;
+      subscriptionKeyRef.current = null;
+    }
+
+    hasSeenEventRef.current = false;
+    setEventStreamStatus('connecting');
+    console.log('[Events] Subscribing to contexts:', contextIds);
+    app.subscribeToEvents(contextIds, handleContractEvent);
     setEventStreamStatus('connected');
+    subscriptionContextIdsRef.current = [...contextIds];
+    subscriptionKeyRef.current = contextsKey;
+    console.log('[Events] Subscription request sent');
+  }, [
+    app,
+    contextsKey,
+    contextIds,
+    handleContractEvent,
+    isAuthenticated,
+  ]);
+
+  useEffect(() => {
+    if (
+      !app ||
+      !isAuthenticated ||
+      contextIds.length === 0 ||
+      hasSeenEventRef.current
+    ) {
+      return;
+    }
+
+    const retryTimer = window.setInterval(() => {
+      console.log('[Events] Retrying subscription for contexts:', contextIds);
+      app.subscribeToEvents(contextIds, handleContractEvent);
+    }, 2500);
 
     return () => {
-      app.unsubscribeFromEvents(contextIds);
-      setEventStreamStatus('idle');
+      window.clearInterval(retryTimer);
     };
   }, [
     app,
-    appendStreamEvent,
     contextIds,
-    processEventMetadata,
-    extractMessageMetadata,
+    eventStreamStatus,
+    handleContractEvent,
     isAuthenticated,
   ]);
+
+  useEffect(() => {
+    return () => {
+      if (subscriptionContextIdsRef.current && app) {
+        console.log(
+          '[Events] Component unmount, unsubscribing:',
+          subscriptionContextIdsRef.current,
+        );
+        app.unsubscribeFromEvents(subscriptionContextIdsRef.current);
+      }
+      subscriptionContextIdsRef.current = null;
+      subscriptionKeyRef.current = null;
+    };
+  }, [app]);
+
+  useEffect(() => {
+    if (eventStreamStatus !== 'connecting') {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setEventStreamStatus((currentStatus) =>
+        currentStatus === 'connecting' ? 'connected' : currentStatus,
+      );
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [eventStreamStatus]);
 
   const handleSendMessage = useCallback(async () => {
     const trimmed = input.trim();
