@@ -38,6 +38,8 @@ import type {
 
 type ConversationRole = 'system' | 'user' | 'assistant';
 
+type HomePageMode = 'full' | 'admin' | 'player-one' | 'player-two';
+
 interface ConversationMessage {
   id: string;
   role: ConversationRole;
@@ -67,7 +69,11 @@ type EventMessageMetadata = {
 const MODEL_NAME = 'Phi-3-mini-4k-instruct-q4f16_1-MLC';
 const MAX_HISTORY = 200;
 
-export default function HomePage(): JSX.Element {
+interface HomePageProps {
+  mode?: HomePageMode;
+}
+
+export default function HomePage({ mode = 'full' }: HomePageProps): JSX.Element {
   const navigate = useNavigate();
   const { isAuthenticated, logout, app, appUrl } = useCalimero();
   const { show } = useToast();
@@ -1178,39 +1184,109 @@ export default function HomePage(): JSX.Element {
     [gameInfo?.admin, stageKey],
   );
 
+  const showSetupCard = mode === 'full' || mode === 'admin';
+  const showSecretCard = mode === 'full' || mode === 'admin';
+  const showEventsCard = mode === 'full' || mode === 'player-two';
+  const showConversationCard = mode !== 'admin';
+  const showSendCard = mode === 'full' || mode === 'player-one';
+  const showPromptEditor = mode === 'full' || mode === 'admin';
+
   useEffect(() => {
-    if (!gameInfo) {
+    if (mode === 'full') {
+      if (!gameInfo) {
+        return;
+      }
+      let expectedName: string | null = null;
+      switch (stageKey) {
+        case 'waitingforsecret':
+        case 'notstarted':
+          expectedName = gameInfo.admin ?? setupAdminName;
+          break;
+        case 'waitingforquestion':
+          expectedName = gameInfo.player_one ?? setupPlayerOne;
+          break;
+        case 'waitingforanswer':
+          expectedName = gameInfo.player_two ?? setupPlayerTwo;
+          break;
+        case 'completed':
+          expectedName =
+            gameInfo.player_two ??
+            gameInfo.player_one ??
+            gameInfo.admin ??
+            setupAdminName;
+          break;
+        default:
+          break;
+      }
+      if (expectedName && expectedName.length > 0 && displayName !== expectedName) {
+        setDisplayName(expectedName);
+      }
       return;
     }
-    let expectedName: string | null = null;
-    switch (stageKey) {
-      case 'waitingforsecret':
-      case 'notstarted':
-        expectedName = gameInfo.admin ?? null;
-        break;
-      case 'waitingforquestion':
-        expectedName = gameInfo.player_one ?? null;
-        break;
-      case 'waitingforanswer':
-        expectedName = gameInfo.player_two ?? null;
-        break;
-      case 'completed':
-        expectedName =
-          gameInfo.player_two ?? gameInfo.player_one ?? gameInfo.admin ?? null;
-        break;
-      default:
-        break;
+
+    let targetName: string | null = null;
+    if (mode === 'admin') {
+      targetName = gameInfo?.admin ?? setupAdminName;
+    } else if (mode === 'player-one') {
+      targetName = gameInfo?.player_one ?? setupPlayerOne;
+    } else if (mode === 'player-two') {
+      targetName = gameInfo?.player_two ?? setupPlayerTwo;
     }
-    if (expectedName && expectedName.length > 0 && displayName !== expectedName) {
-      setDisplayName(expectedName);
+
+    if (targetName && targetName.length > 0 && displayName !== targetName) {
+      setDisplayName(targetName);
     }
-  }, [displayName, gameInfo, stageKey]);
+  }, [
+    displayName,
+    gameInfo?.admin,
+    gameInfo?.player_one,
+    gameInfo?.player_two,
+    mode,
+    setupAdminName,
+    setupPlayerOne,
+    setupPlayerTwo,
+    stageKey,
+  ]);
 
   return (
     <>
       <MeroNavbar variant="elevated" size="md">
         <NavbarBrand text={translations.auth.title} />
         <NavbarMenu align="center">{connectionBadge}</NavbarMenu>
+        <NavbarMenu align="center">
+          <NavbarItem>
+            <Button
+              variant="ghost"
+              onClick={() => navigate('/home')}
+            >
+              Full view
+            </Button>
+          </NavbarItem>
+          <NavbarItem>
+            <Button
+              variant="ghost"
+              onClick={() => navigate('/p-admin')}
+            >
+              Admin
+            </Button>
+          </NavbarItem>
+          <NavbarItem>
+            <Button
+              variant="ghost"
+              onClick={() => navigate('/player-one')}
+            >
+              Player One
+            </Button>
+          </NavbarItem>
+          <NavbarItem>
+            <Button
+              variant="ghost"
+              onClick={() => navigate('/player-two')}
+            >
+              Player Two
+            </Button>
+          </NavbarItem>
+        </NavbarMenu>
         <NavbarMenu align="right">
           <NavbarItem>
             <CalimeroConnectButton
@@ -1346,200 +1422,207 @@ export default function HomePage(): JSX.Element {
                       Clear history
                     </Button>
                   </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '0.5rem',
-                      padding: '0.75rem',
-                      background: 'rgba(15, 23, 42, 0.45)',
-                      borderRadius: '10px',
-                      border: '1px solid rgba(148, 163, 184, 0.18)',
-                    }}
-                  >
-                    <Text size="sm" color="muted">
-                      Game setup
-                    </Text>
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: '0.75rem',
-                      }}
-                    >
-                      <Input
-                        value={setupAdminName}
-                        onChange={(event) =>
-                          setSetupAdminName(event.target.value)
-                        }
-                        placeholder="Admin name"
-                        style={{ flex: '1 1 200px' }}
-                        disabled={namesLocked}
-                      />
-                      <Input
-                        value={setupPlayerOne}
-                        onChange={(event) =>
-                          setSetupPlayerOne(event.target.value)
-                        }
-                        placeholder="Player 1 name"
-                        style={{ flex: '1 1 200px' }}
-                        disabled={namesLocked}
-                      />
-                      <Input
-                        value={setupPlayerTwo}
-                        onChange={(event) =>
-                          setSetupPlayerTwo(event.target.value)
-                        }
-                        placeholder="Player 2 name"
-                        style={{ flex: '1 1 200px' }}
-                        disabled={namesLocked}
-                      />
-                    </div>
-                    {namesLocked && (
-                      <Text size="xs" color="muted">
-                        Names are locked while the current game is active.
-                      </Text>
-                    )}
-                    <Button variant="primary" onClick={handleCreateGame}>
-                      Create or reset game
-                    </Button>
-                  </div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '0.5rem',
-                      padding: '0.75rem',
-                      background: 'rgba(15, 23, 42, 0.45)',
-                      borderRadius: '10px',
-                      border: '1px solid rgba(148, 163, 184, 0.18)',
-                    }}
-                  >
-                    <Text size="sm" color="muted">
-                      Secret management
-                    </Text>
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: '0.75rem',
-                      }}
-                    >
-                      <Input
-                        value={secretInput}
-                        onChange={(event) =>
-                          setSecretInput(event.target.value)
-                        }
-                        placeholder="Secret word (single word)"
-                        style={{ flex: '1 1 240px' }}
-                      />
-                      <Button
-                        variant="secondary"
-                        onClick={handleSetSecret}
-                      >
-                        Set secret
-                      </Button>
-                    </div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: '0.75rem',
-                      }}
-                    >
-                      <Button variant="ghost" onClick={handleRevealSecret}>
-                        Reveal secret (authorized roles)
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={handleDebugRevealSecret}
-                      >
-                        Debug reveal
-                      </Button>
-                    </div>
-                    {revealedSecret !== null && (
-                      <Text size="xs" color="muted">
-                        Known secret: {' '}
-                        <span style={{ color: '#fbbf24' }}>{revealedSecret}</span>
-                      </Text>
-                    )}
-                    {latestGuessWasCorrect !== null && (
-                      <Text
-                        size="xs"
-                        style={{
-                          color: latestGuessWasCorrect ? '#34d399' : '#f87171',
-                        }}
-                      >
-                        Latest guess:{' '}
-                        {latestGuessWasCorrect ? 'correct 🎉' : 'incorrect'}
-                      </Text>
-                    )}
+                  {showSetupCard && (
                     <div
                       style={{
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '0.35rem',
+                        gap: '0.5rem',
+                        padding: '0.75rem',
+                        background: 'rgba(15, 23, 42, 0.45)',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(148, 163, 184, 0.18)',
                       }}
                     >
                       <Text size="sm" color="muted">
-                        Custom assistant prompt
+                        Game setup
                       </Text>
-                      <textarea
-                        value={llmPrompt}
-                        onChange={(event) => setLlmPrompt(event.target.value)}
-                        rows={3}
+                      <div
                         style={{
-                          width: '100%',
-                          background: 'rgba(15, 23, 42, 0.6)',
-                          color: '#e5e7eb',
-                          border: '1px solid rgba(148, 163, 184, 0.2)',
-                          borderRadius: '8px',
-                          padding: '0.6rem',
-                          fontSize: '0.9rem',
-                          resize: 'vertical',
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: '0.75rem',
                         }}
-                      />
-                      <Text size="xs" color="muted">
-                        The secret is automatically appended to the prompt before generation.
-                      </Text>
+                      >
+                        <Input
+                          value={setupAdminName}
+                          onChange={(event) =>
+                            setSetupAdminName(event.target.value)
+                          }
+                          placeholder="Admin name"
+                          style={{ flex: '1 1 200px' }}
+                          disabled={namesLocked}
+                        />
+                        <Input
+                          value={setupPlayerOne}
+                          onChange={(event) =>
+                            setSetupPlayerOne(event.target.value)
+                          }
+                          placeholder="Player 1 name"
+                          style={{ flex: '1 1 200px' }}
+                          disabled={namesLocked}
+                        />
+                        <Input
+                          value={setupPlayerTwo}
+                          onChange={(event) =>
+                            setSetupPlayerTwo(event.target.value)
+                          }
+                          placeholder="Player 2 name"
+                          style={{ flex: '1 1 200px' }}
+                          disabled={namesLocked}
+                        />
+                      </div>
+                      {namesLocked && (
+                        <Text size="xs" color="muted">
+                          Names are locked while the current game is active.
+                        </Text>
+                      )}
+                      <Button variant="primary" onClick={handleCreateGame}>
+                        Create or reset game
+                      </Button>
                     </div>
-                  </div>
+                  )}
+                  {showSecretCard && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.5rem',
+                        padding: '0.75rem',
+                        background: 'rgba(15, 23, 42, 0.45)',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(148, 163, 184, 0.18)',
+                      }}
+                    >
+                      <Text size="sm" color="muted">
+                        Secret management
+                      </Text>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: '0.75rem',
+                        }}
+                      >
+                        <Input
+                          value={secretInput}
+                          onChange={(event) =>
+                            setSecretInput(event.target.value)
+                          }
+                          placeholder="Secret word (single word)"
+                          style={{ flex: '1 1 240px' }}
+                        />
+                        <Button
+                          variant="secondary"
+                          onClick={handleSetSecret}
+                        >
+                          Set secret
+                        </Button>
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: '0.75rem',
+                        }}
+                      >
+                        <Button variant="ghost" onClick={handleRevealSecret}>
+                          Reveal secret (authorized roles)
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={handleDebugRevealSecret}
+                        >
+                          Debug reveal
+                        </Button>
+                      </div>
+                      {revealedSecret !== null && (
+                        <Text size="xs" color="muted">
+                          Known secret: {' '}
+                          <span style={{ color: '#fbbf24' }}>{revealedSecret}</span>
+                        </Text>
+                      )}
+                      {latestGuessWasCorrect !== null && (
+                        <Text
+                          size="xs"
+                          style={{
+                            color: latestGuessWasCorrect ? '#34d399' : '#f87171',
+                          }}
+                        >
+                          Latest guess:{' '}
+                          {latestGuessWasCorrect ? 'correct 🎉' : 'incorrect'}
+                        </Text>
+                      )}
+                      {showPromptEditor && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.35rem',
+                          }}
+                        >
+                          <Text size="sm" color="muted">
+                            Custom assistant prompt
+                          </Text>
+                          <textarea
+                            value={llmPrompt}
+                            onChange={(event) => setLlmPrompt(event.target.value)}
+                            rows={3}
+                            style={{
+                              width: '100%',
+                              background: 'rgba(15, 23, 42, 0.6)',
+                              color: '#e5e7eb',
+                              border: '1px solid rgba(148, 163, 184, 0.2)',
+                              borderRadius: '8px',
+                              padding: '0.6rem',
+                              fontSize: '0.9rem',
+                              resize: 'vertical',
+                            }}
+                          />
+                          <Text size="xs" color="muted">
+                            The secret is automatically appended to the prompt before generation.
+                          </Text>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
-              <Card variant="rounded">
-                <CardHeader>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      width: '100%',
-                      gap: '0.5rem',
-                    }}
-                  >
-                    <CardTitle style={{ margin: 0 }}>Node Event Stream</CardTitle>
-                    <Button
-                      variant="ghost"
-                      onClick={() =>
-                        setIsEventPanelCollapsed(
-                          (currentCollapsed) => !currentCollapsed,
-                        )
-                      }
-                      style={{ paddingInline: '0.5rem' }}
+              {showEventsCard && (
+                <Card variant="rounded">
+                  <CardHeader>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        width: '100%',
+                        gap: '0.5rem',
+                      }}
                     >
-                      {isEventPanelCollapsed ? 'Expand' : 'Collapse'}
-                    </Button>
-                  </div>
-                </CardHeader>
-                {!isEventPanelCollapsed && (
-                  <CardContent
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '1rem',
-                    }}
-                  >
+                      <CardTitle style={{ margin: 0 }}>Node Event Stream</CardTitle>
+                      <Button
+                        variant="ghost"
+                        onClick={() =>
+                          setIsEventPanelCollapsed(
+                            (currentCollapsed) => !currentCollapsed,
+                          )
+                        }
+                        style={{ paddingInline: '0.5rem' }}
+                      >
+                        {isEventPanelCollapsed ? 'Expand' : 'Collapse'}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  {!isEventPanelCollapsed && (
+                    <CardContent
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '1rem',
+                      }}
+                    >
                     <div
                       style={{
                         display: 'flex',
@@ -1639,107 +1722,129 @@ export default function HomePage(): JSX.Element {
                       })
                     )}
                   </div>
-                </CardContent>
+                    </CardContent>
+                  )}
+                </Card>
               )}
-            </Card>
 
-              <Card
-                variant="rounded"
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                }}
-              >
-                <CardHeader>
-                  <CardTitle>Conversation</CardTitle>
-                </CardHeader>
-                <CardContent
+              {showConversationCard && (
+                <Card
+                  variant="rounded"
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '1rem',
-                    paddingRight: '0.5rem',
-                    minHeight: 0,
                   }}
                 >
-                  <div
+                  <CardHeader>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        width: '100%',
+                        gap: '0.5rem',
+                      }}
+                    >
+                      <CardTitle style={{ margin: 0 }}>Conversation</CardTitle>
+                      <Button
+                        variant="ghost"
+                        onClick={loadHistory}
+                        disabled={isLoadingHistory}
+                      >
+                        {isLoadingHistory ? 'Refreshing…' : 'Refresh chat'}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent
                     style={{
-                      maxHeight: '60vh',
-                      overflowY: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '1rem',
+                      paddingRight: '0.5rem',
+                      minHeight: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        maxHeight: '60vh',
+                        overflowY: 'auto',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '1rem',
+                      }}
+                    >
+                      {messages.length === 0 ? (
+                        <Text size="sm" color="muted">
+                          Start the game by sending a question.
+                        </Text>
+                      ) : (
+                        messages.map((message) => (
+                          <MessageBubble key={message.id} message={message} />
+                        ))
+                      )}
+                      <div ref={messagesEndRef} />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {showSendCard && (
+                <Card variant="rounded">
+                  <CardHeader>
+                    <CardTitle>Send a message</CardTitle>
+                  </CardHeader>
+                  <CardContent
+                    style={{
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '1rem',
                     }}
                   >
-                    {messages.length === 0 ? (
-                      <Text size="sm" color="muted">
-                        Start the game by sending a question.
-                      </Text>
-                    ) : (
-                      messages.map((message) => (
-                        <MessageBubble key={message.id} message={message} />
-                      ))
-                    )}
-                    <div ref={messagesEndRef} />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card variant="rounded">
-                <CardHeader>
-                  <CardTitle>Send a message</CardTitle>
-                </CardHeader>
-                <CardContent
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '1rem',
-                  }}
-                >
-                  <textarea
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                    rows={4}
-                    placeholder="Write your message...
+                    <textarea
+                      value={input}
+                      onChange={(event) => setInput(event.target.value)}
+                      rows={4}
+                      placeholder="Write your message...
 Only the current player can act"
-                    style={{
-                      width: '100%',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      color: '#e5e7eb',
-                      border: '1px solid rgba(148, 163, 184, 0.2)',
-                      borderRadius: '8px',
-                      padding: '0.75rem',
-                      fontSize: '0.95rem',
-                      resize: 'vertical',
-                      whiteSpace: 'pre-line',
-                    }}
-                  />
-                  {stageKey === 'waitingforanswer' && (
-                    <Text size="xs" color="muted">
-                      Player two answers using “Trigger LLM” only.
-                    </Text>
-                  )}
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'flex-end',
-                      gap: '1rem',
-                    }}
-                  >
-                    <Button
-                      variant="primary"
-                      onClick={handleSendMessage}
-                      disabled={
-                        isGenerating ||
-                        input.trim().length === 0 ||
-                        stageKey === 'waitingforanswer'
-                      }
+                      style={{
+                        width: '100%',
+                        background: 'rgba(15, 23, 42, 0.6)',
+                        color: '#e5e7eb',
+                        border: '1px solid rgba(148, 163, 184, 0.2)',
+                        borderRadius: '8px',
+                        padding: '0.75rem',
+                        fontSize: '0.95rem',
+                        resize: 'vertical',
+                        whiteSpace: 'pre-line',
+                      }}
+                    />
+                    {stageKey === 'waitingforanswer' && (
+                      <Text size="xs" color="muted">
+                        Player two answers using “Trigger LLM” only.
+                      </Text>
+                    )}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        gap: '1rem',
+                      }}
                     >
-                      {isGenerating ? 'Generating…' : 'Send'}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                      <Button
+                        variant="primary"
+                        onClick={handleSendMessage}
+                        disabled={
+                          isGenerating ||
+                          input.trim().length === 0 ||
+                          stageKey === 'waitingforanswer'
+                        }
+                      >
+                        {isGenerating ? 'Generating…' : 'Send'}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </GridItem>
         </Grid>

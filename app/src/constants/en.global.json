@@ -37,11 +37,11 @@
     }
   },
   "auth": {
-    "title": "Priscilla - A Calimero implementation of a distribuite WASM LLM Network",
+    "title": "Priscilla",
     "back": "Back",
     "goToContext": "Go to game dashboard",
     "description": {
-      "title": "Priscilla - A Calimero implementation of a distribuite WASM LLM Network",
+      "title": "Priscilla",
       "subtitle": "A Calimero implementation of a distribuite WASM LLM Network",
       "features": [
         "Interact with a decentralized LLM network using Calimero protocol",
