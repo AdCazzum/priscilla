@@ -172,6 +172,18 @@ export class AbiClient {
   }
 
   /**
+   * message_by_id
+   */
+  public async messageById(params: { id: number }): Promise<ChatMessage> {
+    const response = await this.app.execute(this.context, 'message_by_id', params);
+    if (response.success) {
+      return response.result as ChatMessage;
+    } else {
+      throw new Error(response.error || 'Execution failed');
+    }
+  }
+
+  /**
    * clear_history
    */
   public async clearHistory(): Promise<void> {

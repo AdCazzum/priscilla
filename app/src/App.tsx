@@ -6,7 +6,7 @@ import { ToastProvider } from '@calimero-network/mero-ui';
 import HomePage from './pages/home';
 import Authenticate from './pages/login/Authenticate';
 
-const APPLICATION_ID = '8QY7kTBczcsUvYdn8z3AF1iPL4SpgJRTgWBTHUSn2von';
+const APPLICATION_ID = 'EPDuFXkZohMTCxBRSuAQbDbpbQeZrMUD1hs8CGrRETJe';
 
 export default function App() {
   const [clientAppId] = useState<string>(APPLICATION_ID);
