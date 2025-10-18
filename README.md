@@ -60,7 +60,6 @@ Open the app in your browser and connect to a running node.
 
 - The chat UI streams responses using `@mlc-ai/web-llm`’s **Phi-3-mini-4k-instruct-q4f16_1-MLC** model.  
   The first request will trigger a client-side download (hundreds of MB); subsequent chats are served from the browser cache.
-- Per la sezione eventi SSE puoi impostare `VITE_MCP_BASE_URL` (es. `http://localhost:3000`) per puntare al Control Plane. Se non presente, il client tenta di usare direttamente il nodo Calimero selezionato.
 
 Docs: https://calimero-network.github.io/build/quickstart
 

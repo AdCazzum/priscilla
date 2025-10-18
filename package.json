@@ -20,7 +20,9 @@
   },
   "dependencies": {
     "@calimero-network/mero-icons": "^0.0.4",
-    "@calimero-network/mero-ui": "^0.3.4"
+    "@calimero-network/mero-ui": "^0.3.4",
+    "@iexec/dataprotector": "2.0.0-beta.20",
+    "@iexec/dataprotector-deserializer": "^0.1.1"
   },
   "name": "priscilla"
 }
